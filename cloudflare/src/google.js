@@ -14,8 +14,9 @@
 //
 // The Gmail refresh token is stored encrypted (AES-GCM, key derived from
 // SESSION_SECRET), and is only ever used to find your sent tracked emails and
-// add or remove these two labels (and, if "Hide tracking from my own Sent copy"
-// is on, to replace your Sent copy with one without the tracking image: sentcopy.js).
+// add or remove these two labels, for auto-try (retry.js), to spot replies in their
+// threads from the From/Date headers alone (replies.js), and (if "Hide tracking from my
+// own Sent copy" is on) to replace your Sent copy with one without the tracking image (sentcopy.js).
 
 import { now, randomToken } from "./util.js";
 
@@ -46,6 +47,11 @@ export async function ensureGoogleSchema(db) {
     ["emails", "gmail_label", "TEXT"],    // label applied: sent | opened | nomatch
     ["emails", "retry_json", "TEXT"],     // auto-try plan and progress (src/retry.js)
     ["emails", "sent_clean", "TEXT"],     // tracking taken out of your Sent copy? (src/sentcopy.js)
+    ["emails", "replied_at", "REAL"],     // when the first reply arrived (src/replies.js), NULL = no reply seen
+    ["emails", "replied_by", "TEXT"],     // who replied: their name, or their address
+    ["emails", "replied_addr", "TEXT"],   // who replied: their address
+    ["emails", "reply_thread", "TEXT"],   // Gmail thread id of gmail_msg (cached for reply checks)
+    ["emails", "reply_checked", "REAL"],  // last time the thread was checked for a reply
   ];
   for (const [t, c, type] of cols) {
     try { await db.prepare(`ALTER TABLE ${t} ADD COLUMN ${c} ${type}`).run(); }

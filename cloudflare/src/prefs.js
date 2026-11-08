@@ -4,6 +4,7 @@
 export const NOTIFY_KINDS = [
   ["open", "Email opened"],
   ["click", "Link in an email clicked"],
+  ["reply", "Someone replied (needs Gmail connected)"],
   ["doc", "Tracked PDF viewed"],
   ["link", "Tracked link clicked"],
   ["spike", "Open spike (opened again and again)"],

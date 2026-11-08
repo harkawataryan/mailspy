@@ -12,12 +12,11 @@ const MAX_TERMS = 6;
 // on the emails row `e`; `t` is the current unix time (a number, safe to inline).
 const scheduled = t => `(COALESCE(e.scheduled_at,0)=-1 OR COALESCE(e.scheduled_at,0)>${Math.floor(t)})`;
 export const STATUSES = [
+  { key: "replied",   label: "Replied",    sql: () => "e.replied_at IS NOT NULL" },
   { key: "opened",    label: "Opened",     sql: () => "e.opens>0" },
   { key: "unopened",  label: "Not opened", sql: t => `e.opens=0 AND NOT ${scheduled(t)}` },
   { key: "clicked",   label: "Clicked",    sql: () => "e.clicks>0" },
   { key: "scheduled", label: "Scheduled",  sql: scheduled },
-  // Reply detection adds emails.replied_at; its filter is this one line:
-  // { key: "replied", label: "Replied", sql: () => "e.replied_at IS NOT NULL" },
 ];
 
 export const RANGES = [["", "All time"], ["7", "Last 7 days"], ["30", "Last 30 days"], ["90", "Last 90 days"]];

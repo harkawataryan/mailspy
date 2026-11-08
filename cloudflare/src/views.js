@@ -7,6 +7,7 @@ import { classifyAgent, placeOf } from "./tracking.js";
 import { markSVG } from "../../brand/mark.js";
 import { NOTIFY_KINDS } from "./prefs.js";
 import { STATUSES, RANGES, PAGE_SIZE, filterQuery } from "./lists.js";
+import { OPEN_PATTERN_JS } from "./people.js";
 
 const MARK = markSVG("mk");
 
@@ -107,7 +108,7 @@ const STYLE = `<style>
   .empty b { color:var(--text); font-weight:500; }
 
   /* metrics strip */
-  .metrics { display:grid; grid-template-columns:repeat(4,1fr); background:var(--panel); border:1px solid var(--line);
+  .metrics { display:grid; grid-template-columns:repeat(var(--n,4),1fr); background:var(--panel); border:1px solid var(--line);
              border-radius:var(--r); margin-bottom:24px; }
   .metric { padding:16px 18px; border-left:1px solid var(--line); }
   .metric:first-child { border-left:0; }
@@ -115,7 +116,7 @@ const STYLE = `<style>
   .metric .v { font-size:24px; font-weight:600; letter-spacing:-.5px; margin-top:2px; font-variant-numeric:tabular-nums; }
   .metric .v.sm { font-size:15px; letter-spacing:0; margin-top:6px; font-weight:500; }
   .metric .n { color:var(--faint); font-size:12.5px; margin-top:1px; }
-  @media (max-width:720px) { .metrics { grid-template-columns:repeat(2,1fr); } .metric:nth-child(3) { border-left:0; }
+  @media (max-width:720px) { .metrics { grid-template-columns:repeat(2,1fr); } .metric:nth-child(odd) { border-left:0; }
                              .metric:nth-child(n+3) { border-top:1px solid var(--line); } }
 
   /* tables */
@@ -137,6 +138,8 @@ const STYLE = `<style>
   .st::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--faint); flex:none; }
   .st.open { color:var(--text); } .st.open::before { background:var(--accent); }
   .st.sched::before { background:var(--blue); }
+  .st.reply { color:var(--accent); font-weight:500; } .st.reply::before { background:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); }
+  .st.reply .d { font-weight:400; }
   .st .d { color:var(--muted); }
   .tag { font-size:11.5px; color:var(--muted); border:1px solid var(--line-2); border-radius:4px; padding:0 5px; line-height:17px; white-space:nowrap; }
 
@@ -152,6 +155,15 @@ const STYLE = `<style>
   .seg button:first-child { border-left:0; }
   .seg button:hover { color:var(--text); }
   .seg button.on { background:var(--sunk); color:var(--text); font-weight:500; }
+  .seg a { display:flex; align-items:center; padding:0 12px; height:28px; font-size:12.5px; color:var(--muted); border-left:1px solid var(--line-2); }
+  .seg a:first-child { border-left:0; }
+  .seg a:hover { color:var(--text); }
+  .seg a.on { background:var(--sunk); color:var(--text); font-weight:500; }
+  .seg.tabs { display:flex; }
+  th.sort { cursor:pointer; user-select:none; }
+  th.sort:hover, th.sort.on { color:var(--text); }
+  th.sort.on::after { content:" ↓"; }
+  th.sort.on.asc::after { content:" ↑"; }
   @media (max-width:720px) { .seg { display:none; } .search { width:150px; } }
   .seg a { padding:0 10px; height:28px; display:flex; align-items:center; font-size:12.5px; color:var(--muted); border-left:1px solid var(--line-2); }
   .seg a:first-child { border-left:0; }
@@ -248,6 +260,13 @@ const STYLE = `<style>
   .autosave.ok::before { content:"✓ "; }
   .autosave.bad { background:var(--red, #d93025); color:#fff; }
   .ev .dot.doc { background:var(--amber); }
+
+  /* people: open-time pattern */
+  .hours { display:grid; grid-template-columns:repeat(24,minmax(0,1fr)); gap:2px; align-items:end; height:72px; }
+  .hours i { display:block; background:var(--accent); border-radius:2px 2px 0 0; min-height:2px; opacity:.85; }
+  .hours i.z { background:var(--line); opacity:1; }
+  .hours-ax { display:grid; grid-template-columns:repeat(4,1fr); color:var(--faint); font-size:11.5px; margin-top:6px; }
+  .usual { font-size:15px; font-weight:500; margin-bottom:12px; }
   .pages-chart { list-style:none; margin:0; padding:12px 16px; }
   .pages-chart li { display:grid; grid-template-columns:56px minmax(0,1fr) 64px; gap:12px; align-items:center; font-size:13px; padding:4px 0; }
   .pages-chart .bar { margin:0; height:8px; }
@@ -401,7 +420,7 @@ function shell(title, body, active = "", user = null) {
   const theme = themeOf(user);
   // Main sections only. Documents, Links and Tracked HTML still exist at their
   // addresses (and are linked from the pages that use them), just not up here.
-  const items = [["/", "Emails"], ["/find", "Find"], ["/templates", "Templates"], ["/report", "Report"]];
+  const items = [["/", "Emails"], ["/people", "People"], ["/find", "Find"], ["/templates", "Templates"], ["/report", "Report"]];
   const nav = items.map(([h, n]) => `<a href="${h}" class="${active === n ? "on" : ""}">${n}</a>`).join("");
   const initial = user ? esc(String(user.name || user.email || "?").trim().charAt(0).toUpperCase()) : "";
   const account = user ? `
@@ -439,6 +458,7 @@ function statusOf(e) {
   const s = e.scheduled_at;
   if (s && s > now()) return "scheduled";
   if (s === -1) return "scheduled";
+  if (e.replied_at) return "replied";
   return e.opens > 0 ? "opened" : "unopened";
 }
 
@@ -446,18 +466,22 @@ function status(e) {
   const s = e.scheduled_at;
   if (s && s > now()) return `<span class="st sched">Scheduled <span class="d">${when(s, "short")}</span></span>`;
   if (s === -1) return `<span class="st sched">Scheduled</span>`;
+  if (e.replied_at) return `<span class="st reply" title="${esc(`${e.replied_by || "They"} replied`)}">Replied <span class="d">${shortAgo(e.replied_at)}</span></span>`;
   if (e.opens > 0) return `<span class="st open">Opened</span>`;
   return `<span class="st">Not opened</span>`;
 }
 
 function metrics(items) {
-  return `<div class="metrics">${items.map(m => `<div class="metric"><div class="k">${esc(m.k)}</div>
+  return `<div class="metrics"${items.length !== 4 ? ` style="--n:${items.length}"` : ""}>${items.map(m => `<div class="metric"><div class="k">${esc(m.k)}</div>
     <div class="v${m.small ? " sm" : ""}">${m.v}</div>${m.n ? `<div class="n">${m.n}</div>` : ""}</div>`).join("")}</div>`;
 }
 
 function recipient(e) {
   return esc(e.to_name ? `${e.to_name} · ${e.to_addr}` : e.to_addr);
 }
+
+const personHref = addr => `/people/${encodeURIComponent(String(addr || "").trim().toLowerCase())}`;
+const companyHref = key => `/companies/${encodeURIComponent(key)}`;
 
 // ---- activity list ----
 function activityItem(v) {
@@ -579,7 +603,15 @@ export function emailPage({ user, prefs, email: e, links, events, maxAlert, base
   const sentLabel = e.scheduled_at && e.scheduled_at > now() ? "Scheduled for" : e.scheduled_at === -1 ? "Scheduled" : "Sent";
   const sentWhen = e.scheduled_at === -1 ? "" : when(e.scheduled_at && e.scheduled_at > 0 ? e.scheduled_at : e.created_at);
 
-  const evRows = events.length ? events.map(v => {
+  // The reply (from their Gmail thread) goes in the activity list among the opens and clicks.
+  const rows = e.replied_at
+    ? [...events, { kind: "reply", ts: e.replied_at }].sort((a, b) => b.ts - a.ts) : events;
+  const evRows = rows.length ? rows.map(v => {
+    if (v.kind === "reply") {
+      return `<tr><td><div class="t1" style="max-width:none"><span class="st reply">Replied</span></div>
+        <div class="t2">${esc(e.replied_by && e.replied_addr && e.replied_by !== e.replied_addr ? `${e.replied_by} <${e.replied_addr}>` : e.replied_addr || e.replied_by || "")}</div></td>
+        <td>Gmail</td><td>—</td><td class="r time">${when(v.ts, "short")}</td></tr>`;
+    }
     let what = v.kind === "open" ? "Opened" : "Clicked a link", why = "";
     if (v.flagged === "prefetch") why = "Image loaded right after sending";
     else if (v.flagged === "scanner") why = "Security scanner";
@@ -602,7 +634,8 @@ export function emailPage({ user, prefs, email: e, links, events, maxAlert, base
   const body = `
   <div class="crumb"><a href="/">Emails</a> &nbsp;/&nbsp; ${esc(e.to_name || e.to_addr)}</div>
   <div class="head"><div><h1>${esc(e.subject)}</h1>
-    <div class="meta">To ${esc(e.to_name ? `${e.to_name} <${e.to_addr}>` : e.to_addr)} · ${sentLabel} ${sentWhen}</div></div>
+    <div class="meta">To <a class="link" href="${personHref(e.to_addr)}">${esc(e.to_name ? `${e.to_name} <${e.to_addr}>` : e.to_addr)}</a> · ${sentLabel} ${sentWhen}${e.replied_at
+      ? ` · <b style="color:var(--accent);font-weight:500">${esc(e.replied_by || "They")} replied</b> ${when(e.replied_at, "short")}` : ""}</div></div>
     <div>${status(e)}</div></div>
   ${metrics([
     { k: "Opens", v: e.opens },
@@ -611,7 +644,7 @@ export function emailPage({ user, prefs, email: e, links, events, maxAlert, base
     { k: "Last opened", v: when(opens.length ? opens[0].ts : null, "short"), small: true },
   ])}
   <div class="cols">
-    <div class="panel"><div class="ph"><h2>Activity<span class="count">${events.length}</span></h2><span class="sp"></span>
+    <div class="panel"><div class="ph"><h2>Activity<span class="count">${rows.length}</span></h2><span class="sp"></span>
       ${allEvents.length ? `<a class="btn sm" href="/email/${e.id}.csv" download>Download CSV</a>` : ""}</div>
       <div style="overflow-x:auto"><table><thead><tr><th>Event</th><th>Client</th><th>Location</th><th class="r">Time</th></tr></thead>
       <tbody>${evRows}</tbody></table></div>
@@ -648,8 +681,12 @@ export function compose({ user, notice = "", form = {}, result = null }) {
   return shell("Tracked HTML", body, "Tracked HTML", user);
 }
 
-export function report({ user, sent, opened, clicks, bots, top, since, until }) {
+export function report({ user, sent, opened, replied = 0, clicks, bots, top, replies = [], since, until }) {
   const rate = sent ? Math.round((100 * opened) / sent) : 0;
+  const replyRate = sent ? Math.round((100 * replied) / sent) : 0;
+  const replyRows = replies.map(r => `<tr class="row" data-href="/email/${r.id}">
+      <td><div class="t1">${esc(r.replied_by || r.to_name || r.to_addr)}</div><div class="t2">${esc(r.subject)}</div></td>
+      <td class="r time">${when(r.replied_at, "short")}</td></tr>`).join("");
   const maxOpens = Math.max(1, ...top.map(t => t.opens));
   const rows = top.length ? top.map(t => `<tr class="row" data-href="/email/${t.id}">
       <td><div class="t1">${esc(t.subject)}</div><div class="t2">${esc(t.to_addr)}</div></td>
@@ -661,11 +698,15 @@ export function report({ user, sent, opened, clicks, bots, top, since, until }) 
   ${metrics([
     { k: "Sent", v: sent },
     { k: "Opened", v: opened, n: `${rate}% open rate` },
+    { k: "Replied", v: replied, n: `${replyRate}% reply rate` },
     { k: "Link clicks", v: clicks },
     { k: "Automated hits filtered", v: bots },
   ])}
   <div class="panel"><div class="ph"><h2>Most opened</h2></div>
-    <table><thead><tr><th>Email</th><th></th><th class="r">Opens</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    <table><thead><tr><th>Email</th><th></th><th class="r">Opens</th></tr></thead><tbody>${rows}</tbody></table></div>
+  <div class="panel"><div class="ph"><h2>Replies<span class="count">${replies.length}</span></h2></div>
+    ${replies.length ? `<table><thead><tr><th>From</th><th class="r">When</th></tr></thead><tbody>${replyRows}</tbody></table>`
+      : `<div class="empty">No replies in the last 7 days. With Gmail connected (Settings), MailSpy spots replies to your tracked emails.</div>`}</div>`;
   return shell("Report", body, "Report", user);
 }
 
@@ -729,7 +770,7 @@ export function settingsPage({ cfg, base, user, prefs, ip = "", notice = "", gma
            <div class="hint" style="margin:-4px 0 14px 26px">So opening your own sent email (on your phone, say) never counts as the recipient opening it. Shortly after sending, MailSpy swaps your Sent copy for an identical one without the tracking image; the original goes to Trash. Links in your copy stay tracked, so clicking them yourself still counts. Emails over 2 MB are left as they are.</div>
            <form method="post" action="/settings" onsubmit="return confirm('Stop adding checkmarks in Gmail? Existing ones stay.')">
              <input type="hidden" name="action" value="gmail_disconnect"><button class="btn sm" type="submit">Disconnect Gmail</button></form>`
-        : `<p class="muted" style="margin:0 0 12px;font-size:13.5px">Connect the Gmail account you send from. Google will ask to let MailSpy manage labels; it only ever touches emails you tracked: it adds or removes these two checkmarks and, unless you turn it off, takes the tracking image out of your own Sent copy.</p>
+        : `<p class="muted" style="margin:0 0 12px;font-size:13.5px">Connect the Gmail account you send from. Google will ask to let MailSpy manage labels; it only ever touches emails you tracked: it adds or removes these two checkmarks, spots replies to them (reading only who wrote each message in the conversation, and when) and, unless you turn it off, takes the tracking image out of your own Sent copy.</p>
            <a class="gbtn" href="/auth/google?mode=connect" style="max-width:260px">${G_MARK}<span>Connect Gmail</span></a>`}
     </div></div>` : ""}
 
@@ -1073,6 +1114,205 @@ export function linkPage({ user, base, link, clicks }) {
   return shell(link.label || "Link", body, "Links", user);
 }
 
+// ---- people and companies ----
+const zero = n => n || "<span class='faint'>0</span>";
+const agoCell = ts => `<td class="r time" data-sort="${Math.round(ts || 0)}">${ts ? esc(ago(ts)) : "—"}</td>`;
+const pctOf = (n, of) => (of ? `${Math.round((100 * n) / of)}%` : "0%");
+const opensAttr = p => p.opens.map(t => Math.round(t)).join(",");
+
+// Sortable columns, search, and "usually opens" worked out in the viewer's time zone.
+const PEOPLE_SCRIPT = `<script>
+(function () {
+  ${OPEN_PATTERN_JS}
+  function hoursOf(el) {
+    return (el.dataset.opens ? el.dataset.opens.split(",") : []).map(function (t) { return new Date(t * 1000).getHours(); });
+  }
+  document.querySelectorAll("td[data-opens]").forEach(function (el) {
+    var h = hoursOf(el), w = usualWindow(h);
+    if (w) { el.textContent = hourRange(w.start); el.dataset.sort = w.start; el.title = w.n + " of " + w.total + " opens"; }
+    else el.title = h.length < 3 ? "Not enough opens yet" : "No clear pattern yet";
+  });
+  var chart = document.getElementById("hours");
+  if (chart) {
+    var h = hoursOf(chart), w = usualWindow(h), c = [], max = 1, i;
+    for (i = 0; i < 24; i++) c.push(0);
+    h.forEach(function (x) { c[x]++; });
+    c.forEach(function (n) { if (n > max) max = n; });
+    chart.innerHTML = c.map(function (n, i) {
+      return '<i class="' + (n ? "" : "z") + '" style="height:' + (n ? Math.max(8, Math.round(100 * n / max)) : 3) + '%" title="' +
+        ((i % 12) || 12) + (i < 12 ? " AM" : " PM") + ": " + n + (n === 1 ? " open" : " opens") + '"></i>';
+    }).join("");
+    var u = document.getElementById("usual");
+    if (u) u.textContent = w ? "Usually opens " + hourRange(w.start) : h.length < 3 ? "Not enough opens yet to see a pattern" : "No clear pattern yet";
+    var n = document.getElementById("usual-n");
+    if (n && w) n.textContent = w.n + " of " + w.total + " opens, your local time";
+  }
+  var t = document.querySelector("table.sortable"); if (!t) return;
+  var tb = t.tBodies[0], rows = [].slice.call(tb.querySelectorAll("tr.row")), q = document.getElementById("q");
+  function apply() {
+    var s = q ? q.value.trim().toLowerCase() : "", shown = 0;
+    rows.forEach(function (r) { var ok = !s || r.dataset.q.indexOf(s) >= 0; r.hidden = !ok; if (ok) shown++; });
+    var none = document.getElementById("none"); if (none) none.hidden = shown > 0;
+  }
+  if (q) {
+    q.addEventListener("input", apply);
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "/" && document.activeElement !== q && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); q.focus(); }
+      if (e.key === "Escape" && document.activeElement === q) { q.value = ""; apply(); q.blur(); }
+    });
+  }
+  [].forEach.call(t.tHead.rows[0].cells, function (th, i) {
+    if (!th.classList.contains("sort")) return;
+    th.addEventListener("click", function () {
+      var asc = th.classList.contains("on") ? !th.classList.contains("asc") : th.dataset.type === "text";
+      [].forEach.call(t.tHead.rows[0].cells, function (o) { o.classList.remove("on", "asc"); });
+      th.classList.add("on"); if (asc) th.classList.add("asc");
+      rows.sort(function (a, b) {
+        var x = a.cells[i].dataset.sort, y = b.cells[i].dataset.sort;
+        var d = th.dataset.type === "text" ? String(x).localeCompare(String(y)) : Number(x) - Number(y);
+        return asc ? d : -d;
+      });
+      rows.forEach(function (r) { tb.appendChild(r); });
+    });
+  });
+})();
+</script>`;
+
+function peopleTabs(on) {
+  return `<div class="seg tabs">${[["/people", "People"], ["/companies", "Companies"]]
+    .map(([h, n]) => `<a href="${h}" class="${on === n ? "on" : ""}">${n}</a>`).join("")}</div>`;
+}
+
+function searchBox(placeholder) {
+  return `<div class="search">${SEARCH_ICON}<input id="q" type="text" placeholder="${esc(placeholder)}" autocomplete="off"><kbd>/</kbd></div>`;
+}
+
+const sortTh = (label, type = "num", cls = "r") => `<th class="sort ${cls}" data-type="${type}">${label}</th>`;
+
+// One row per person. companyName(p) labels where they work (left out on a company's own page).
+function peopleTable(people, companyName = null) {
+  const rows = people.map(p => {
+    const sub = [p.name ? p.addr : "", companyName ? companyName(p) : ""].filter(Boolean).join(" · ");
+    return `<tr class="row" data-href="${personHref(p.addr)}" data-q="${esc(`${p.name} ${p.addr} ${companyName ? companyName(p) : ""}`.toLowerCase())}">
+      <td data-sort="${esc((p.name || p.addr).toLowerCase())}"><div class="t1">${esc(p.name || p.addr)}</div>${sub ? `<div class="t2">${esc(sub)}</div>` : ""}</td>
+      <td class="r num" data-sort="${p.sent}">${p.sent}</td>
+      <td class="r num" data-sort="${p.opened}">${zero(p.opened)}</td>
+      <td class="r num" data-sort="${p.clicked}">${zero(p.clicked)}</td>
+      <td class="r num" data-sort="${p.replied}">${p.replied ? `<span class="st reply">${p.replied}</span>` : zero(0)}</td>
+      ${agoCell(p.last_contact)}${agoCell(p.last_activity)}
+      <td class="r time" data-sort="-1" data-opens="${opensAttr(p)}">—</td></tr>`;
+  }).join("");
+  return `<div style="overflow-x:auto"><table class="sortable"><thead><tr>${sortTh("Person", "text", "")}${sortTh("Emails")}${sortTh("Opened")}
+      ${sortTh("Clicked")}${sortTh("Replied")}${sortTh("Last contact")}${sortTh("Last activity")}${sortTh("Usually opens")}</tr></thead>
+    <tbody>${rows}</tbody></table><div class="empty" id="none" hidden>Nobody matches.</div></div>`;
+}
+
+const noPeople = `<div class="empty"><b>Nobody yet.</b> Everyone you send a tracked email to shows up here.</div>`;
+
+export function peoplePage({ user, people, companies, names }) {
+  const reached = people.filter(p => p.opened || p.clicked || p.replied).length;
+  const replied = people.filter(p => p.replied).length;
+  const companyName = p => (p.personal ? "" : names.get(p.org) || "");
+  const body = `
+  <div class="head"><div><h1>People</h1><div class="meta">Everyone you've emailed, and how they responded. Newest activity first; click a column to sort.</div></div>
+    ${peopleTabs("People")}</div>
+  ${people.length ? metrics([
+    { k: "People", v: people.length },
+    { k: "Companies", v: companies.filter(c => !c.personal).length },
+    { k: "Opened or clicked", v: reached, n: `${pctOf(reached, people.length)} of people` },
+    { k: "Replied", v: replied, n: `${pctOf(replied, people.length)} of people` },
+  ]) : ""}
+  <div class="panel"><div class="ph"><h2>People<span class="count">${people.length}</span></h2><span class="sp"></span>
+      ${people.length ? searchBox("Search people") : ""}</div>
+    ${people.length ? peopleTable(people, companyName) : noPeople}</div>
+  ${PEOPLE_SCRIPT}`;
+  return shell("People", body, "People", user);
+}
+
+export function companiesPage({ user, companies }) {
+  const real = companies.filter(c => !c.personal);
+  const rows = companies.map(c => `<tr class="row" data-href="${companyHref(c.key)}" data-q="${esc(`${c.name} ${c.domain} ${c.people.map(p => `${p.name} ${p.addr}`).join(" ")}`.toLowerCase())}">
+      <td data-sort="${esc(c.personal ? "~" : c.name.toLowerCase())}"><div class="t1">${esc(c.name)}</div><div class="t2">${esc(c.personal ? "Gmail, Outlook, iCloud and other personal email" : c.domain)}</div></td>
+      <td class="r num" data-sort="${c.people.length}">${c.people.length}</td>
+      <td class="r num" data-sort="${c.sent}">${c.sent}</td>
+      <td class="r num" data-sort="${c.opened}">${zero(c.opened)}</td>
+      <td class="r num" data-sort="${c.clicked}">${zero(c.clicked)}</td>
+      <td class="r num" data-sort="${c.replied}">${c.replied ? `<span class="st reply">${c.replied}</span>` : zero(0)}</td>
+      ${agoCell(c.last_contact)}${agoCell(c.last_activity)}</tr>`).join("");
+  const repliedCos = real.filter(c => c.replied).length;
+  const body = `
+  <div class="head"><div><h1>Companies</h1><div class="meta">The people you've emailed, grouped by where they work (their email domain).</div></div>
+    ${peopleTabs("Companies")}</div>
+  ${companies.length ? metrics([
+    { k: "Companies", v: real.length },
+    { k: "People", v: companies.reduce((n, c) => n + c.people.length, 0) },
+    { k: "Emails", v: companies.reduce((n, c) => n + c.sent, 0) },
+    { k: "Replied", v: repliedCos, n: `${pctOf(repliedCos, real.length)} of companies` },
+  ]) : ""}
+  <div class="panel"><div class="ph"><h2>Companies<span class="count">${real.length}</span></h2><span class="sp"></span>
+      ${companies.length ? searchBox("Search companies") : ""}</div>
+    ${companies.length ? `<div style="overflow-x:auto"><table class="sortable"><thead><tr>${sortTh("Company", "text", "")}${sortTh("People")}${sortTh("Emails")}
+        ${sortTh("Opened")}${sortTh("Clicked")}${sortTh("Replied")}${sortTh("Last contact")}${sortTh("Last activity")}</tr></thead>
+      <tbody>${rows}</tbody></table><div class="empty" id="none" hidden>No companies match.</div></div>` : noPeople}</div>
+  ${PEOPLE_SCRIPT}`;
+  return shell("Companies", body, "People", user);
+}
+
+export const composeUrl = addr => `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(addr)}`;
+
+export function personPage({ user, person: p, company, emails }) {
+  const rows = emails.map(e => `<tr class="row" data-href="/email/${e.id}">
+      <td><div class="t1">${esc(e.subject)}</div><div class="t2">${e.scheduled_at === -1 ? "Scheduled" : when(e.scheduled_at > 0 ? e.scheduled_at : e.created_at, "short")}</div></td>
+      <td>${status(e)}</td>
+      <td class="r num">${zero(e.opens)}</td>
+      <td class="r num">${zero(e.clicks)}</td>
+      <td class="r time">${e.last_open ? esc(ago(e.last_open)) : "—"}</td></tr>`).join("");
+  const companyLink = `<a class="link" href="${companyHref(company.key)}">${esc(company.name)}</a>`;
+  const body = `
+  <div class="crumb"><a href="/people">People</a> &nbsp;/&nbsp; ${esc(p.name || p.addr)}</div>
+  <div class="head"><div><h1>${esc(p.name || p.addr)}</h1>
+    <div class="meta">${p.name ? `${esc(p.addr)} · ` : ""}${companyLink}${p.last_contact ? ` · last emailed ${when(p.last_contact, "short")}` : ""}</div></div>
+    <a class="btn primary" href="${esc(composeUrl(p.addr))}" target="_blank" rel="noreferrer" title="New email to ${esc(p.addr)} in Gmail">Write</a></div>
+  ${metrics([
+    { k: "Emails", v: p.sent },
+    { k: "Opened", v: p.opened, n: `${pctOf(p.opened, p.sent)} of emails` },
+    { k: "Replied", v: p.replied, n: `${pctOf(p.replied, p.sent)} of emails` },
+    { k: "Last activity", v: p.last_activity ? when(p.last_activity, "short") : "—", small: true },
+  ])}
+  <div class="cols">
+    <div class="panel"><div class="ph"><h2>Emails<span class="count">${emails.length}</span></h2></div>
+      <div style="overflow-x:auto"><table><thead><tr><th>Email</th><th>Status</th><th class="r">Opens</th><th class="r">Clicks</th><th class="r">Last opened</th></tr></thead>
+      <tbody>${rows}</tbody></table></div></div>
+    <div class="panel"><div class="ph"><h2>When they open</h2></div>
+      <div class="pb">
+        <div class="usual" id="usual">${p.opens.length < 3 ? "Not enough opens yet to see a pattern" : "&nbsp;"}</div>
+        <div class="hours" id="hours" data-opens="${opensAttr(p)}"></div>
+        <div class="hours-ax"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span></div>
+        <p class="hint" id="usual-n">Genuine opens only: no scanners, automatic loads or your own views. Your local time.</p>
+      </div></div>
+  </div>
+  ${PEOPLE_SCRIPT}`;
+  return shell(p.name || p.addr, body, "People", user);
+}
+
+export function companyPage({ user, company: c }) {
+  const body = `
+  <div class="crumb"><a href="/people">People</a> &nbsp;/&nbsp; <a href="/companies">Companies</a> &nbsp;/&nbsp; ${esc(c.name)}</div>
+  <div class="head"><div><h1>${esc(c.name)}</h1>
+    <div class="meta">${c.personal ? "Gmail, Outlook, iCloud and other personal addresses (not a company)" : esc(c.domain)}${c.last_contact ? ` · last emailed ${when(c.last_contact, "short")}` : ""}</div></div></div>
+  ${metrics([
+    { k: "People", v: c.people.length },
+    { k: "Emails", v: c.sent },
+    { k: "Opened", v: c.opened, n: `${pctOf(c.opened, c.sent)} of emails` },
+    { k: "Replied", v: c.replied, n: `${pctOf(c.replied, c.sent)} of emails` },
+  ])}
+  <div class="panel"><div class="ph"><h2>People<span class="count">${c.people.length}</span></h2><span class="sp"></span>
+      ${c.people.length > 8 ? searchBox("Search people") : ""}</div>
+    ${peopleTable(c.people)}</div>
+  ${PEOPLE_SCRIPT}`;
+  return shell(c.name, body, "People", user);
+}
+
 export function privacyPage(cfg, base) {
   const contact = cfg.contactEmail
     ? `email <a href="mailto:${esc(cfg.contactEmail)}">${esc(cfg.contactEmail)}</a>`
@@ -1088,13 +1328,13 @@ export function privacyPage(cfg, base) {
   <p>When a MailSpy user sends an email from Gmail with the MailSpy Chrome extension, the extension adds a tiny invisible image to the message and routes its links through ${esc(base)}. When the recipient's mail app loads that image or a link is clicked, MailSpy records it so the sender can see that the email was opened.</p>
 
   <h2>Signing in with Google and Gmail access</h2>
-  <p>MailSpy users can sign in with Google. MailSpy then receives their name, email address and Google account ID, and, if they allow it, permission to manage labels in their Gmail (the <code>gmail.modify</code> permission). MailSpy uses that permission only to find the emails the user tracked in their own Sent mail, by recipient, date and subject, and to add or remove two labels on them: ✔ (sent) and ✔✔ (opened). If the user turns on <b>auto-try</b> for an email (sending to several possible addresses for one person, one at a time), MailSpy also looks for delivery-failure notices about that email, re-sends the user's own email to the next address the user chose when one bounces, and moves the failed copy and its failure notice to Trash. Unless the user turns it off (Settings → Gmail checkmarks → <b>Hide tracking from my own Sent copy</b>), MailSpy also replaces the user's own Sent copy of each tracked email with an identical copy without the tracking image, so the user reading their own sent email (for example in the Gmail phone app) isn't counted as the recipient opening it. To do that it reads that one message in full (including attachments, in memory only, just long enough to make the copy), adds the copy to the same conversation with the same labels and date (nothing is sent to anyone), and moves the original to Trash, where Gmail deletes it after 30 days. It does not otherwise read, store or share the content of any email, and does not send, delete or change anything else. The access token is stored encrypted and can be removed any time under Settings → Gmail checkmarks → Disconnect, or in the Google account's security settings.</p>
+  <p>MailSpy users can sign in with Google. MailSpy then receives their name, email address and Google account ID, and, if they allow it, permission to manage labels in their Gmail (the <code>gmail.modify</code> permission). MailSpy uses that permission only to find the emails the user tracked in their own Sent mail, by recipient, date and subject, and to add or remove two labels on them: ✔ (sent) and ✔✔ (opened). If the user turns on <b>auto-try</b> for an email (sending to several possible addresses for one person, one at a time), MailSpy also looks for delivery-failure notices about that email, re-sends the user's own email to the next address the user chose when one bounces, and moves the failed copy and its failure notice to Trash. To show the user when someone replied, MailSpy looks at the Gmail conversation of each email the user tracked in the last 30 days and reads only the From and Date headers of its messages (and Gmail's marker for which of them the user sent), never their subject, body or attachments; it stores only when the reply arrived and the replier's name and address. Unless the user turns it off (Settings → Gmail checkmarks → <b>Hide tracking from my own Sent copy</b>), MailSpy also replaces the user's own Sent copy of each tracked email with an identical copy without the tracking image, so the user reading their own sent email (for example in the Gmail phone app) isn't counted as the recipient opening it. To do that it reads that one message in full (including attachments, in memory only, just long enough to make the copy), adds the copy to the same conversation with the same labels and date (nothing is sent to anyone), and moves the original to Trash, where Gmail deletes it after 30 days. It does not otherwise read, store or share the content of any email, and does not send, delete or change anything else. The access token is stored encrypted and can be removed any time under Settings → Gmail checkmarks → Disconnect, or in the Google account's security settings.</p>
   <p>MailSpy's use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
 
   <h2>Data about MailSpy users</h2>
   <ul>
     <li>Your account: email address, optional name, and a hashed password (never the password itself).</li>
-    <li>For each tracked email: the recipient's address and name as you entered them, the subject line, the links it contained, and when it was sent or scheduled.</li>
+    <li>For each tracked email: the recipient's address and name as you entered them, the subject line, the links it contained, when it was sent or scheduled, and, with Gmail connected, when a reply arrived and who sent it.</li>
     <li>The extension reads the recipient, subject and body of an email only at the moment you click Send or Schedule send, to add tracking. It does not read your inbox, and it does not store email bodies.</li>
   </ul>
 

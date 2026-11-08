@@ -17,7 +17,7 @@ export const VARS = [
   ["{my_name}", "Your name"],
 ];
 
-const WEBMAIL = /^(gmail|googlemail|yahoo|ymail|outlook|hotmail|live|msn|icloud|me|mac|aol|proton|protonmail|pm|gmx|zoho|yandex|mail|fastmail|hey)\./i;
+export const WEBMAIL = /^(gmail|googlemail|yahoo|ymail|outlook|hotmail|live|msn|icloud|me|mac|aol|proton|protonmail|pm|gmx|zoho|yandex|mail|fastmail|hey)\./i;
 
 // Created on first use, so no manual database step is needed (same as migrations/0007_templates.sql).
 let ensured = false;
