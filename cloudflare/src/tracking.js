@@ -2,6 +2,7 @@
 
 import { now, randomToken, shortCode, esc, decodeEntities } from "./util.js";
 import { prefsFor, readPrefs, isIgnoredRecipient } from "./prefs.js";
+import { ensureGoogleSchema } from "./google.js";
 
 export const PIXEL_GIF = Uint8Array.from(
   atob("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"), c => c.charCodeAt(0));
@@ -256,14 +257,21 @@ export async function markScheduled(db, userId, token, at) {
   return true;
 }
 
+// A reminder that's due waits for a reply check after it fell due (src/replies.js),
+// so you're never told to follow up on an email that was answered. If checks keep
+// failing, it goes out anyway after this long.
+const REPLY_WAIT = 6 * 3600;
+
 // Cron: follow-up reminders and housekeeping.
 export async function runScheduled(db, cfg) {
+  await ensureGoogleSchema(db);
   const t = now();
-  // Candidates: unopened, not yet reminded, out for at least an hour.
+  // Candidates: unopened, no reply, not yet reminded, out for at least an hour.
   const due = await db.prepare(
-    `SELECT e.id, e.to_addr, e.to_name, e.subject, e.user_id, e.created_at, e.scheduled_at, u.prefs
+    `SELECT e.id, e.to_addr, e.to_name, e.subject, e.user_id, e.created_at, e.scheduled_at, e.reply_checked, u.prefs,
+            (u.gmail_token IS NOT NULL AND e.gmail_msg IS NOT NULL) AS reply_watched
      FROM emails e LEFT JOIN users u ON u.id = e.user_id
-     WHERE e.followup_done=0 AND e.opens=0
+     WHERE e.followup_done=0 AND e.opens=0 AND e.replied_at IS NULL
        AND (e.scheduled_at IS NULL OR e.scheduled_at > 0)
        AND COALESCE(NULLIF(e.scheduled_at, -1), e.created_at) < ? LIMIT 200`)
     .bind(t - 3600).all();
@@ -275,7 +283,10 @@ export async function runScheduled(db, cfg) {
       stmts.push(db.prepare("UPDATE emails SET followup_done=1 WHERE id=?").bind(e.id));
       continue;
     }
-    if (sentRef(e) > t - hours * 3600) continue;
+    const dueAt = sentRef(e) + hours * 3600;
+    if (dueAt > t) continue;
+    const watched = e.reply_watched && sentRef(e) > t - 30 * 86400;       // replies.js REPLY_DAYS
+    if (watched && (e.reply_checked || 0) < dueAt && t - dueAt < REPLY_WAIT) continue;  // check for a reply first
     const who = e.to_name || e.to_addr;
     stmts.push(alertStmt(db, e.id, "followup",
       `No open yet: "${e.subject}" to ${who} after ${hours}h. Time to follow up.`, t, e.user_id));

@@ -16,6 +16,8 @@ import { findPerson, findRecruiters } from "./finder.js";
 import { cleanPlan, startRetry, retryByToken, sweepRetries } from "./retry.js";
 import { googleEnabled, authUrl, makeState, readState, exchangeCode, saveGmail, disconnectGmail, gmailStatus,
          ensureGoogleSchema, labelEmail, sweepLabels } from "./google.js";
+import { sweepReplies, refreshReply } from "./replies.js";
+import { loadPeople, loadPerson, groupCompanies, companyNames, PERSONAL } from "./people.js";
 import { listTemplates, getTemplate, saveTemplate, deleteTemplate, markUsed, templatesFor } from "./templates.js";
 import { pendingLabels, saveLabels } from "./labels.js";   // older Apps Script labels (kept for anyone still running it)
 import { uploadDoc, deleteDoc, docBeat, createLink, deleteLink, recordLinkClick, MAX_PDF_BYTES,
@@ -459,7 +461,7 @@ async function handle(req, env, ctx) {
       db.prepare("SELECT * FROM emails WHERE user_id=? ORDER BY id DESC LIMIT 200").bind(uid),
       db.prepare("SELECT COUNT(*) AS total, SUM(opens>0) AS opened, SUM(opens) AS opens, SUM(clicks) AS clicks FROM emails WHERE user_id=?").bind(uid),
       db.prepare(ACTIVITY_SQL).bind(uid, 30),
-      db.prepare("SELECT * FROM alerts WHERE user_id=? AND kind IN ('followup','spike','revived') ORDER BY id DESC LIMIT 6").bind(uid),
+      db.prepare("SELECT * FROM alerts WHERE user_id=? AND kind IN ('reply','followup','spike','revived') ORDER BY id DESC LIMIT 6").bind(uid),
       db.prepare("SELECT COALESCE(MAX(id),0) AS m FROM alerts WHERE user_id=?").bind(uid),
       db.prepare("SELECT COUNT(*) AS sent FROM emails WHERE user_id=? AND created_at>=?").bind(uid, now() - 7 * 86400),
     ]);
@@ -473,8 +475,16 @@ async function handle(req, env, ctx) {
   m = path.match(/^\/email\/(\d+)$/);
   if (m && method === "GET") {
     const id = parseInt(m[1], 10);
-    const e = await db.prepare("SELECT * FROM emails WHERE id=? AND user_id=?").bind(id, uid).first();
+    let e = await db.prepare("SELECT * FROM emails WHERE id=? AND user_id=?").bind(id, uid).first();
     if (!e) return notFound();
+    // Look for a reply in Gmail now (at most ~2.5s; anything slower finishes in the background
+    // and the page's live updates pick up the "replied" alert).
+    if (googleEnabled(cfg) && !e.replied_at) {
+      const work = refreshReply(env, cfg, e).catch(err => console.error("reply refresh:", err));
+      const done = await Promise.race([work.then(() => true), new Promise(r => setTimeout(() => r(false), 2500))]);
+      if (!done) ctx.waitUntil(work);
+      else e = (await db.prepare("SELECT * FROM emails WHERE id=? AND user_id=?").bind(id, uid).first()) || e;
+    }
     const [links, events, maxA] = await db.batch([
       db.prepare("SELECT * FROM links WHERE email_id=? ORDER BY id").bind(id),
       db.prepare(`SELECT v.*, l.url FROM events v LEFT JOIN links l ON l.id=v.link_id
@@ -515,9 +525,13 @@ async function handle(req, env, ctx) {
   if (path === "/report" && method === "GET") {
     const until = now();
     const since = until - 7 * 86400;
-    const [sent, opened, clicks, bots, top] = await db.batch([
+    await ensureGoogleSchema(db);   // replied_at
+    const [sent, opened, replied, replies, clicks, bots, top] = await db.batch([
       db.prepare("SELECT COUNT(*) AS n FROM emails WHERE user_id=? AND created_at>=?").bind(uid, since),
       db.prepare("SELECT COUNT(*) AS n FROM emails WHERE user_id=? AND created_at>=? AND opens>0").bind(uid, since),
+      db.prepare("SELECT COUNT(*) AS n FROM emails WHERE user_id=? AND created_at>=? AND replied_at IS NOT NULL").bind(uid, since),
+      db.prepare(`SELECT id, subject, to_addr, to_name, replied_at, replied_by FROM emails
+                  WHERE user_id=? AND replied_at>=? ORDER BY replied_at DESC LIMIT 10`).bind(uid, since),
       db.prepare(`SELECT COUNT(*) AS n FROM events v JOIN emails e ON e.id=v.email_id
                   WHERE e.user_id=? AND v.kind='click' AND v.is_bot=0 AND v.ts>=?`).bind(uid, since),
       db.prepare(`SELECT COUNT(*) AS n FROM events v JOIN emails e ON e.id=v.email_id
@@ -526,9 +540,34 @@ async function handle(req, env, ctx) {
                   WHERE e.user_id=? AND v.kind='open' AND v.is_bot=0 AND v.ts>=? GROUP BY e.id ORDER BY opens DESC LIMIT 5`).bind(uid, since),
     ]);
     return html(views.report({
-      user, sent: sent.results[0].n, opened: opened.results[0].n, clicks: clicks.results[0].n,
-      bots: bots.results[0].n, top: top.results, since, until,
+      user, sent: sent.results[0].n, opened: opened.results[0].n, replied: replied.results[0].n, replies: replies.results,
+      clicks: clicks.results[0].n, bots: bots.results[0].n, top: top.results, since, until,
     }));
+  }
+
+  // ---- people and companies ----
+  if ((path === "/people" || path === "/companies") && method === "GET") {
+    const people = await loadPeople(db, uid);
+    const names = await companyNames(env, people.filter(p => !p.personal).map(p => p.org));
+    const companies = groupCompanies(people, names);
+    return html(path === "/people" ? views.peoplePage({ user, people, companies, names }) : views.companiesPage({ user, companies }));
+  }
+  m = path.match(/^\/(people|companies)\/([^/]+)$/);
+  if (m && method === "GET") {
+    let key;
+    try { key = decodeURIComponent(m[2]).trim().toLowerCase(); } catch { return notFound(); }
+    if (m[1] === "people") {
+      const r = await loadPerson(db, uid, key);
+      if (!r) return notFound();
+      const p = r.person;
+      const company = p.personal ? { key: PERSONAL, name: "Personal addresses" }
+        : { key: p.org, name: (await companyNames(env, [p.org])).get(p.org) };
+      return html(views.personPage({ user, person: p, company, emails: r.emails }));
+    }
+    const people = (await loadPeople(db, uid)).filter(p => (key === PERSONAL ? p.personal : !p.personal && p.org === key));
+    if (!people.length) return notFound();
+    const c = groupCompanies(people, key === PERSONAL ? new Map() : await companyNames(env, [key]))[0];
+    return html(views.companyPage({ user, company: c }));
   }
 
   if (path === "/settings") {
@@ -753,7 +792,9 @@ export default {
   },
   async scheduled(event, env, ctx) {
     const cfg = settings(env);
-    ctx.waitUntil(runScheduled(env.DB, cfg));
+    // Replies first, so follow-up reminders never go out for an email that was just answered.
+    ctx.waitUntil(sweepReplies(env, cfg).catch(err => console.error("reply sweep:", err))
+      .then(() => runScheduled(env.DB, cfg)));
     ctx.waitUntil(sweepLabels(env, cfg).catch(err => console.error("label sweep:", err)));
     ctx.waitUntil(sweepRetries(env, cfg).catch(err => console.error("auto-try sweep:", err)));
   },

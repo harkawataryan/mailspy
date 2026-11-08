@@ -17,7 +17,13 @@ CREATE TABLE IF NOT EXISTS emails (
   scheduled_at  REAL,
   user_id       INTEGER,
   gmail_thread  TEXT,     -- Gmail thread id, found by the labels script
-  label_state   TEXT      -- Gmail label last applied: unopened | opened | clicked | nomatch
+  label_state   TEXT,     -- Gmail label last applied: unopened | opened | clicked | nomatch
+  -- replies, spotted in the sent message's Gmail thread (src/replies.js; also added on first use)
+  replied_at    REAL,     -- when the first reply arrived; NULL = no reply seen
+  replied_by    TEXT,     -- who replied: their name, or their address
+  replied_addr  TEXT,     -- who replied: their address
+  reply_thread  TEXT,     -- Gmail thread id of the sent message (cache)
+  reply_checked REAL      -- last time the thread was checked
 );
 CREATE INDEX IF NOT EXISTS idx_emails_followup ON emails(followup_done, opens, created_at);
 CREATE INDEX IF NOT EXISTS idx_emails_user ON emails(user_id, id);
