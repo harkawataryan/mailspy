@@ -3,7 +3,7 @@
 // hairline borders instead of shadows, type-led hierarchy, tabular numbers.
 
 import { esc, ago, now } from "./util.js";
-import { classifyAgent } from "./tracking.js";
+import { classifyAgent, placeOf } from "./tracking.js";
 import { markSVG } from "../../brand/mark.js";
 import { NOTIFY_KINDS } from "./prefs.js";
 import { STATUSES, RANGES, PAGE_SIZE, filterQuery } from "./lists.js";
@@ -478,11 +478,13 @@ function activityItem(v) {
   }
   const who = esc(v.to_name || v.to_addr);
   let line, dot = v.kind === "click" ? "click" : "", off = false;
+  const place = placeOf(v);
   if (v.flagged === "prefetch") { line = `Image loaded right after sending`; dot = "off"; off = true; }
   else if (v.flagged === "scanner") { line = `Security scanner`; dot = "off"; off = true; }
   else if (v.flagged === "self") { line = `You viewed it`; dot = "off"; off = true; }
+  else if (v.flagged === "apple") { line = `<b>${who}</b>: Apple Mail, may be automatic`; dot = "off"; off = true; }
   else line = `<b>${who}</b> ${v.kind === "open" ? "opened" : "clicked a link"}`;
-  const sub = `<a href="/email/${v.email_id}">${esc(v.subject)}</a>${v.geo && !off ? ` · ${esc(v.geo)}` : ""}${off ? " · not counted" : ""}`;
+  const sub = `<a href="/email/${v.email_id}">${esc(v.subject)}</a>${place && !off ? ` · ${esc(place)}` : ""}${off ? " · not counted" : ""}`;
   return `<li class="${off ? "off" : ""}"><span class="dot ${dot}"></span>
     <div><div class="l1">${line}</div><div class="l2">${sub}</div></div><span class="tm">${shortAgo(v.ts)}</span></li>`;
 }
@@ -490,7 +492,8 @@ function activityItem(v) {
 // ---- pages ----
 export function dashboard({ user, cfg, prefs, emails, matched = emails.length, filters = { q: "", status: "", days: "", page: 1 },
                            totals, activity, reminders, maxAlert, week }) {
-  if (prefs && !prefs.show_automated) activity = activity.filter(v => !v.flagged);
+  // Apple Mail fetches may be the person reading, so they stay visible either way.
+  if (prefs && !prefs.show_automated) activity = activity.filter(v => !v.flagged || v.flagged === "apple");
   const f = filters;
   const filtered = !!(f.q || f.status || f.days);
   const rows = emails.length ? emails.map(e => `<tr class="row" data-href="/email/${e.id}">
@@ -566,9 +569,12 @@ export function dashboard({ user, cfg, prefs, emails, matched = emails.length, f
 
 export function emailPage({ user, prefs, email: e, links, events, maxAlert, base }) {
   const allEvents = events;
-  if (prefs && !prefs.show_automated) events = events.filter(v => !v.is_bot);
+  if (prefs && !prefs.show_automated) events = events.filter(v => !v.is_bot || v.flagged === "apple");
   const opens = events.filter(v => !v.is_bot && v.kind === "open");
-  const bots = allEvents.filter(v => v.is_bot).length;
+  const bots = allEvents.filter(v => v.is_bot && v.flagged !== "apple").length;
+  const apple = allEvents.filter(v => v.flagged === "apple").length;
+  const leftOut = [bots ? `${bots} automated ${bots > 1 ? "hits" : "hit"}` : "",
+    apple ? `${apple} Apple Mail ${apple > 1 ? "fetches" : "fetch"} (Apple loads images whether or not the email is read)` : ""].filter(Boolean).join(" and ");
   const maxClicks = Math.max(1, ...links.map(l => l.clicks));
   const sentLabel = e.scheduled_at && e.scheduled_at > now() ? "Scheduled for" : e.scheduled_at === -1 ? "Scheduled" : "Sent";
   const sentWhen = e.scheduled_at === -1 ? "" : when(e.scheduled_at && e.scheduled_at > 0 ? e.scheduled_at : e.created_at);
@@ -578,12 +584,13 @@ export function emailPage({ user, prefs, email: e, links, events, maxAlert, base
     if (v.flagged === "prefetch") why = "Image loaded right after sending";
     else if (v.flagged === "scanner") why = "Security scanner";
     else if (v.flagged === "self") why = "You viewed it";
+    else if (v.flagged === "apple") why = "Apple Mail, may be automatic";
     const main = why ? `${why} <span class="tag">not counted</span>` : what;
     const link = v.url ? `<div class="t2"><a class="link" href="${esc(v.url)}" target="_blank" rel="noreferrer">${esc(v.url)}</a></div>` : "";
     return `<tr class="${why ? "dim" : ""}">
       <td><div class="t1" style="max-width:none">${main}</div>${link}</td>
-      <td>${esc(classifyAgent(v.user_agent))}</td>
-      <td>${esc(v.geo || "—")}</td>
+      <td>${esc(v.flagged === "apple" ? "Apple Mail" : classifyAgent(v.user_agent))}</td>
+      <td>${esc(placeOf(v) || "—")}</td>
       <td class="r time">${when(v.ts, "short")}</td></tr>`;
   }).join("") : `<tr><td colspan="4"><div class="empty">No opens or clicks yet. They appear here as they happen.</div></td></tr>`;
 
@@ -608,7 +615,7 @@ export function emailPage({ user, prefs, email: e, links, events, maxAlert, base
       ${allEvents.length ? `<a class="btn sm" href="/email/${e.id}.csv" download>Download CSV</a>` : ""}</div>
       <div style="overflow-x:auto"><table><thead><tr><th>Event</th><th>Client</th><th>Location</th><th class="r">Time</th></tr></thead>
       <tbody>${evRows}</tbody></table></div>
-      ${bots ? `<div class="pb hint" style="border-top:1px solid var(--line);margin:0">${bots} automated ${bots > 1 ? "hits" : "hit"} left out of the counts.</div>` : ""}</div>
+      ${leftOut ? `<div class="pb hint" style="border-top:1px solid var(--line);margin:0">${esc(leftOut)} left out of the counts.</div>` : ""}</div>
     <div class="panel"><div class="ph"><h2>Links</h2></div>${linkList}</div>
   </div>
   ${liveScript(maxAlert, e.id, prefs)}`;
@@ -718,13 +725,16 @@ export function settingsPage({ cfg, base, user, prefs, ip = "", notice = "", gma
       ${gmail.error ? `<div class="note bad" style="margin:0 0 12px">${esc(gmail.error)}</div>` : ""}
       ${gmail.connected
         ? `<p style="margin:0 0 12px;font-size:13.5px"><span class="st open">Connected</span> <span class="muted">as ${esc(gmail.email)}</span></p>
+           <label class="chk"><input type="checkbox" name="hide_sent_pixel" form="prefsForm"${prefs.hide_sent_pixel ? " checked" : ""}>Hide tracking from my own Sent copy</label>
+           <div class="hint" style="margin:-4px 0 14px 26px">So opening your own sent email (on your phone, say) never counts as the recipient opening it. Shortly after sending, MailSpy swaps your Sent copy for an identical one without the tracking image; the original goes to Trash. Links in your copy stay tracked, so clicking them yourself still counts. Emails over 2 MB are left as they are.</div>
            <form method="post" action="/settings" onsubmit="return confirm('Stop adding checkmarks in Gmail? Existing ones stay.')">
              <input type="hidden" name="action" value="gmail_disconnect"><button class="btn sm" type="submit">Disconnect Gmail</button></form>`
-        : `<p class="muted" style="margin:0 0 12px;font-size:13.5px">Connect the Gmail account you send from. Google will ask to let MailSpy manage labels; it only ever adds or removes these two checkmarks on emails you tracked.</p>
+        : `<p class="muted" style="margin:0 0 12px;font-size:13.5px">Connect the Gmail account you send from. Google will ask to let MailSpy manage labels; it only ever touches emails you tracked: it adds or removes these two checkmarks and, unless you turn it off, takes the tracking image out of your own Sent copy.</p>
            <a class="gbtn" href="/auth/google?mode=connect" style="max-width:260px">${G_MARK}<span>Connect Gmail</span></a>`}
     </div></div>` : ""}
 
   <form method="post" action="/settings" id="prefsForm"><input type="hidden" name="action" value="prefs">
+  ${gmail.enabled && gmail.connected ? "" : `<input type="hidden" name="hide_sent_pixel" value="${prefs.hide_sent_pixel ? "on" : ""}">`}
   <div class="sect"><div><h3>Notifications</h3><p class="d">Desktop notifications from the extension, and pop-ups on the dashboard. Everything is still recorded either way.</p></div>
     <div class="body">${NOTIFY_KINDS.map(([k, n]) =>
       `<label class="chk"><input type="checkbox" name="notify_${k}"${prefs.notify[k] ? " checked" : ""}>${esc(n)}</label>`).join("")}</div></div>
@@ -800,9 +810,11 @@ export function settingsPage({ cfg, base, user, prefs, ip = "", notice = "", gma
       inflight = null;
       if (again) { again = false; save(); }
     }
-    f.addEventListener("change", function () { clearTimeout(timer); save(); });
-    f.addEventListener("input", function (e) {
+    // Some fields sit outside the form (form="prefsForm"), so listen on the page.
+    document.addEventListener("change", function (e) { if (e.target.form !== f) return; clearTimeout(timer); save(); });
+    document.addEventListener("input", function (e) {
       var t = e.target;
+      if (t.form !== f) return;
       if (t.type === "checkbox" || t.type === "radio") return;   // "change" covers these
       clearTimeout(timer); timer = setTimeout(save, 700);
     });
@@ -1076,7 +1088,7 @@ export function privacyPage(cfg, base) {
   <p>When a MailSpy user sends an email from Gmail with the MailSpy Chrome extension, the extension adds a tiny invisible image to the message and routes its links through ${esc(base)}. When the recipient's mail app loads that image or a link is clicked, MailSpy records it so the sender can see that the email was opened.</p>
 
   <h2>Signing in with Google and Gmail access</h2>
-  <p>MailSpy users can sign in with Google. MailSpy then receives their name, email address and Google account ID, and, if they allow it, permission to manage labels in their Gmail (the <code>gmail.modify</code> permission). MailSpy uses that permission only to find the emails the user tracked in their own Sent mail, by recipient, date and subject, and to add or remove two labels on them: ✔ (sent) and ✔✔ (opened). If the user turns on <b>auto-try</b> for an email (sending to several possible addresses for one person, one at a time), MailSpy also looks for delivery-failure notices about that email, re-sends the user's own email to the next address the user chose when one bounces, and moves the failed copy and its failure notice to Trash. It does not otherwise read, store or share the content of any email, and does not send, delete or change anything else. The access token is stored encrypted and can be removed any time under Settings → Gmail checkmarks → Disconnect, or in the Google account's security settings.</p>
+  <p>MailSpy users can sign in with Google. MailSpy then receives their name, email address and Google account ID, and, if they allow it, permission to manage labels in their Gmail (the <code>gmail.modify</code> permission). MailSpy uses that permission only to find the emails the user tracked in their own Sent mail, by recipient, date and subject, and to add or remove two labels on them: ✔ (sent) and ✔✔ (opened). If the user turns on <b>auto-try</b> for an email (sending to several possible addresses for one person, one at a time), MailSpy also looks for delivery-failure notices about that email, re-sends the user's own email to the next address the user chose when one bounces, and moves the failed copy and its failure notice to Trash. Unless the user turns it off (Settings → Gmail checkmarks → <b>Hide tracking from my own Sent copy</b>), MailSpy also replaces the user's own Sent copy of each tracked email with an identical copy without the tracking image, so the user reading their own sent email (for example in the Gmail phone app) isn't counted as the recipient opening it. To do that it reads that one message in full (including attachments, in memory only, just long enough to make the copy), adds the copy to the same conversation with the same labels and date (nothing is sent to anyone), and moves the original to Trash, where Gmail deletes it after 30 days. It does not otherwise read, store or share the content of any email, and does not send, delete or change anything else. The access token is stored encrypted and can be removed any time under Settings → Gmail checkmarks → Disconnect, or in the Google account's security settings.</p>
   <p>MailSpy's use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
 
   <h2>Data about MailSpy users</h2>
@@ -1090,7 +1102,7 @@ export function privacyPage(cfg, base) {
   <p>A MailSpy user can upload a PDF to share through a link, or create a short tracked link to any web page. PDFs are stored on Cloudflare until the user deletes them. When someone opens a shared PDF, MailSpy records when, for how long, which pages were on screen and for how long, and the same technical details as for emails below. When someone follows a tracked link, MailSpy records the click and then sends them on to the destination.</p>
 
   <h2>Data about email recipients</h2>
-  <p>When a tracked email is opened or a link is clicked, MailSpy records the time, the IP address, the approximate location derived from it (city and country), and the browser or mail app's user agent. Many mail providers, including Gmail, fetch images through their own servers, in which case the IP address and location are the provider's, not the recipient's.</p>
+  <p>When a tracked email is opened or a link is clicked, MailSpy records the time, the IP address, the approximate location derived from it (city and country), and the browser or mail app's user agent. Many mail providers, including Gmail, fetch images through their own servers, in which case the IP address and location are the provider's, not the recipient's; MailSpy then shows "via Gmail" (or Yahoo, Outlook, Apple Mail) instead of a location. Apple Mail's Privacy Protection loads images whether or not the email is read, so those loads are shown as "may be automatic" and are not counted as opens.</p>
 
   <h2>How it's used and shared</h2>
   <ul>

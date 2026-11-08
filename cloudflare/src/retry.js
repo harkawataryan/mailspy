@@ -133,7 +133,7 @@ async function findBounce(token, msgId, addr, since) {
 export async function advanceRetry(env, cfg, emailId) {
   const db = env.DB;
   await ensureGoogleSchema(db);
-  const e = await db.prepare(`SELECT e.id, e.user_id, e.subject, e.scheduled_at, e.retry_json, u.gmail_token
+  const e = await db.prepare(`SELECT e.id, e.user_id, e.subject, e.scheduled_at, e.retry_json, e.gmail_msg, e.sent_clean, u.gmail_token
     FROM emails e JOIN users u ON u.id = e.user_id WHERE e.id=?`).bind(emailId).first();
   if (!e || !e.retry_json) return null;
   let r;
@@ -185,7 +185,7 @@ export async function advanceRetry(env, cfg, emailId) {
         const id = await resend(token, failedCopy, next);
         if (!id) { r.state = "failed"; await save(); return status(r); }
         r.i += 1; r.msg = id; r.at = now(); r.state = "watching"; r.sentFixed = true;
-        stmts.push(db.prepare("UPDATE emails SET to_addr=?, gmail_msg=?, gmail_label=NULL WHERE id=?").bind(next, id, e.id));
+        stmts.push(db.prepare("UPDATE emails SET to_addr=?, gmail_msg=?, gmail_label=NULL, sent_clean=NULL WHERE id=?").bind(next, id, e.id));
       } else {
         r.state = "exhausted";
         stmts.push(alertStmt(db, e.id, "retry", `None of the ${r.cands.length} addresses for ${r.name || "this email"} worked. "${e.subject}" wasn't delivered.`, t, e.user_id));
@@ -193,6 +193,12 @@ export async function advanceRetry(env, cfg, emailId) {
       // tidy up: the failed copy and the bounce notice go to Trash
       await gmail(token, `/messages/${failedCopy}/trash`, { method: "POST" }).catch(() => {});
       await gmail(token, `/messages/${found.bounce.id}/trash`, { method: "POST" }).catch(() => {});
+      // A late bounce after the Sent copy was swapped for one without tracking
+      // (sentcopy.js): r.msg is the original (resent from above, it still has the
+      // tracking image), and the tracking-free copy goes to Trash with it.
+      if (e.sent_clean === "done" && e.gmail_msg && e.gmail_msg !== failedCopy) {
+        await gmail(token, `/messages/${e.gmail_msg}/trash`, { method: "POST" }).catch(() => {});
+      }
       stmts.push(db.prepare("UPDATE emails SET retry_json=? WHERE id=?").bind(JSON.stringify(r), e.id));
       await db.batch(stmts);
       return status(r);

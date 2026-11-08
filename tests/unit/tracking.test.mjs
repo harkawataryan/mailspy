@@ -1,0 +1,121 @@
+// Opens: Apple Mail Privacy Protection, and "via Gmail" instead of a proxy's city (cloudflare/src/tracking.js, views.js).
+import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
+const SRC = new URL("../../cloudflare/src/", import.meta.url).href;
+const T = await import(SRC + "tracking.js");
+const V = await import(SRC + "views.js");
+const P = await import(SRC + "prefs.js");
+
+let results = [];
+const check = (n, c, d) => { results.push(!!c); console.log((c ? "PASS " : "FAIL ") + n + (c ? "" : "  [" + JSON.stringify(d) + "]")); };
+
+// node:sqlite doesn't bind numbered ?1 parameters from a plain list (D1 does): renumber them.
+const plain = (sql, args) => {
+  if (!/\?\d/.test(sql)) return [sql, args];
+  const out = [];
+  return [sql.replace(/\?(\d+)/g, (_, n) => { out.push(args[n - 1]); return "?"; }), out];
+};
+function d1(sqlite) {
+  const stmt = (sql0, args0 = []) => { const [sql, args] = plain(sql0, args0); return {
+    bind: (...a) => stmt(sql0, a),
+    first: async () => sqlite.prepare(sql).get(...args) ?? null,
+    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
+    run: async () => { const r = sqlite.prepare(sql).run(...args); return { meta: { changes: Number(r.changes), last_row_id: Number(r.lastInsertRowid) } }; },
+  }; };
+  return { prepare: sql => stmt(sql), batch: async list => { for (const s of list) await s.run(); return []; } };
+}
+const sqlite = new DatabaseSync(":memory:");
+sqlite.exec(readFileSync(new URL("../../cloudflare/schema.sql", import.meta.url), "utf8"));
+const db = d1(sqlite);
+const cfg = { prefetchWindow: 12, spikeCount: 3, spikeWindow: 600, revivalDays: 7, followupHours: 48, ignoreIps: new Set() };
+const now = () => Date.now() / 1000;
+
+const UA = {
+  apple: "Mozilla/5.0",
+  appleMail: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+  safari: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+  gmail: "Mozilla/5.0 (Windows NT 5.1; rv:11.0) Gecko Firefox/11.0 (via ggpht.com GoogleImageProxy)",
+  yahoo: "YahooMailProxy; https://help.yahoo.com/kb/yahoo-mail-proxy-SLN28749.html",
+  chrome: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36",
+  outlook: "Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0.17928; Pro)",
+};
+const req = (ua, ip = "203.0.113.9", cf = {}) => ({ headers: new Map([["User-Agent", ua], ["CF-Connecting-IP", ip]]), cf });
+
+// ---- the rule ----
+check("Apple proxy: bare 'Mozilla/5.0'", T.isAppleProxy(UA.apple) && T.isAppleProxy(" Mozilla/5.0 "), "");
+check("Apple proxy: Apple Mail's WebKit UA from Apple's network (17/8, ASN 714, IPv6)",
+  T.isAppleProxy(UA.appleMail, "17.58.101.4") && T.isAppleProxy(UA.appleMail, "198.51.100.2", 714) && T.isAppleProxy(UA.appleMail, "2620:149:a44::10"), "");
+check("not Apple proxy: Apple Mail from a home IP, Safari from 17/8, Gmail, Chrome",
+  !T.isAppleProxy(UA.appleMail, "203.0.113.9") && !T.isAppleProxy(UA.safari, "17.1.2.3") && !T.isAppleProxy(UA.gmail) && !T.isAppleProxy(UA.chrome) && !T.isAppleProxy(""), "");
+check("not Apple proxy: 170.x isn't 17.x", !T.isAppleProxy(UA.appleMail, "170.1.2.3"), "");
+
+// ---- where it happened ----
+check("placeOf: Gmail proxy -> via Gmail", T.placeOf({ kind: "open", user_agent: UA.gmail, geo: "Mountain View, US" }) === "via Gmail", "");
+check("placeOf: Yahoo proxy -> via Yahoo", T.placeOf({ kind: "open", user_agent: UA.yahoo, geo: "Sunnyvale, US" }) === "via Yahoo", "");
+check("placeOf: Apple -> via Apple Mail (flag or bare UA)", T.placeOf({ kind: "open", user_agent: UA.appleMail, geo: "Cupertino, US", flagged: "apple" }) === "via Apple Mail"
+  && T.placeOf({ kind: "open", user_agent: UA.apple, geo: "Cupertino, US" }) === "via Apple Mail", "");
+check("placeOf: direct opens and clicks keep their city", T.placeOf({ kind: "open", user_agent: UA.chrome, geo: "Berlin, DE" }) === "Berlin, DE"
+  && T.placeOf({ kind: "open", user_agent: UA.outlook, geo: "Leeds, GB" }) === "Leeds, GB"
+  && T.placeOf({ kind: "click", user_agent: UA.chrome, geo: "Paris, FR" }) === "Paris, FR", "");
+check("placeOf: PDF views keep their city", T.placeOf({ kind: "doc", user_agent: UA.apple, geo: "Oslo, NO" }) === "Oslo, NO", "");
+check("client column: bare Mozilla/5.0 is Apple Mail", T.classifyAgent(UA.apple) === "Apple Mail" && T.classifyAgent(UA.gmail) === "Gmail", "");
+
+// ---- recording ----
+const uid = Number(sqlite.prepare("INSERT INTO users(email,password_hash,api_key,is_admin,created_at) VALUES('me@x.com','x','k',1,1)").run().lastInsertRowid);
+function mk(subject, ago = 120) {
+  const token = "tok" + Math.random().toString(36).slice(2, 10);
+  const id = Number(sqlite.prepare("INSERT INTO emails(token,to_addr,to_name,subject,created_at,user_id) VALUES(?,?,?,?,?,?)").run(token, "jane@acme.com", "Jane", subject, now() - ago, uid).lastInsertRowid);
+  return sqlite.prepare("SELECT id,to_addr,to_name,subject,created_at,scheduled_at,user_id FROM emails WHERE id=?").get(id);
+}
+const em = id => sqlite.prepare("SELECT * FROM emails WHERE id=?").get(id);
+const alerts = id => sqlite.prepare("SELECT kind, message FROM alerts WHERE email_id=? ORDER BY id").all(id);
+const events = id => sqlite.prepare("SELECT * FROM events WHERE email_id=? ORDER BY id").all(id);
+
+const a = mk("Apple one");
+await T.recordEvent(db, cfg, req(UA.apple, "172.225.10.1", { city: "Cupertino", country: "US" }), a, "open");
+let ev = events(a.id)[0];
+check("Apple fetch: recorded as 'apple', not counted, no notification", ev.flagged === "apple" && ev.is_bot === 1 && em(a.id).opens === 0 && alerts(a.id).length === 0, [ev, em(a.id).opens, alerts(a.id)]);
+await new Promise(r => setTimeout(r, 5));
+await T.recordEvent(db, cfg, req(UA.appleMail, "17.58.3.3"), a, "open");
+check("Apple network fetch: also 'apple'", events(a.id)[1].flagged === "apple" && em(a.id).opens === 0, events(a.id)[1]);
+await T.recordEvent(db, cfg, req(UA.chrome, "203.0.113.50", { city: "Berlin", country: "DE" }), a, "click", 1);
+check("a click after an Apple fetch still counts and notifies", em(a.id).clicks === 1 && alerts(a.id).some(x => x.kind === "click"), alerts(a.id));
+await T.recordEvent(db, cfg, req(UA.gmail, "66.249.84.1", { city: "Mountain View", country: "US" }), a, "open");
+const al = alerts(a.id).filter(x => x.kind === "open");
+check("a non-Apple open counts: 'opened ... via Gmail', no Mountain View", em(a.id).opens === 1 && al.length === 1 && al[0].message === 'Jane opened "Apple one" via Gmail', al);
+
+const b = mk("Direct one");
+await T.recordEvent(db, cfg, req(UA.outlook, "198.51.100.7", { city: "Leeds", country: "GB" }), b, "open");
+check("direct open: alert keeps the real place", alerts(b.id)[0].message === 'Jane opened "Direct one" from Leeds, GB', alerts(b.id));
+
+const c = mk("Just sent", 3);
+await T.recordEvent(db, cfg, req(UA.apple), c, "open");
+check("inside the prefetch window: still 'prefetch'", events(c.id)[0].flagged === "prefetch", events(c.id)[0]);
+
+// ---- pages ----
+const user = { id: uid, email: "me@x.com", name: "Me", is_admin: 1 };
+const prefs = P.defaultPrefs(cfg);
+const evRows = sqlite.prepare("SELECT v.*, NULL AS url FROM events v WHERE email_id=? ORDER BY ts DESC").all(a.id);
+const page = V.emailPage({ user, prefs, email: em(a.id), links: [], events: evRows, maxAlert: 0, base: "https://x" });
+check("email page: 'via Gmail', no proxy city", page.includes("via Gmail") && !page.includes("Mountain View") && !page.includes("Cupertino"), "");
+check("email page: Apple rows shown as 'Apple Mail, may be automatic'", page.includes("Apple Mail, may be automatic") && /2 Apple Mail fetches/.test(page), "");
+check("email page: real click location kept", page.includes("Berlin, DE"), "");
+const hidden = V.emailPage({ user, prefs: { ...prefs, show_automated: false }, email: em(a.id), links: [], events: evRows, maxAlert: 0, base: "https://x" });
+check("email page with automated hits hidden: Apple rows still shown", hidden.includes("Apple Mail, may be automatic"), "");
+const act = sqlite.prepare(`SELECT v.id, v.kind, v.ts, v.geo, v.user_agent, v.is_bot, v.flagged, e.id AS email_id, e.to_addr, e.to_name, e.subject
+  FROM events v JOIN emails e ON e.id=v.email_id ORDER BY v.ts DESC`).all();
+const dash = V.dashboard({ user, cfg, prefs, emails: [em(a.id), em(b.id)], totals: { total: 2 }, activity: act, reminders: [], maxAlert: 0, week: {} });
+check("dashboard activity: 'via Gmail', real places kept, Apple labelled", dash.includes("via Gmail") && !dash.includes("Mountain View") && dash.includes("Leeds, GB") && dash.includes("Apple Mail, may be automatic"), "");
+
+// ---- the setting ----
+check("'Hide tracking from my own Sent copy' is on by default", P.defaultPrefs(cfg).hide_sent_pixel === true && P.readPrefs(cfg, "{}").hide_sent_pixel === true, "");
+check("settings form: unticked turns it off, ticked on", P.prefsFromForm(cfg, {}).hide_sent_pixel === false && P.prefsFromForm(cfg, { hide_sent_pixel: "on" }).hide_sent_pixel === true, "");
+const sp = V.settingsPage({ cfg, base: "https://x", user, prefs, gmail: { enabled: true, connected: true, email: "me@x.com" } });
+check("settings: toggle in Gmail checkmarks, tied to the settings form", /<input type="checkbox" name="hide_sent_pixel" form="prefsForm" checked>Hide tracking from my own Sent copy/.test(sp)
+  && sp.indexOf("Hide tracking from my own Sent copy") > sp.indexOf("Gmail checkmarks") && sp.indexOf("Hide tracking from my own Sent copy") < sp.indexOf('id="prefsForm"'), "");
+const sp2 = V.settingsPage({ cfg, base: "https://x", user, prefs, gmail: { enabled: true, connected: false } });
+check("settings without Gmail: value kept in a hidden field", sp2.includes('<input type="hidden" name="hide_sent_pixel" value="on">') && !sp2.includes("Hide tracking from my own Sent copy</label>"), "");
+check("privacy policy explains the Sent-copy swap", V.privacyPage({}, "https://x").includes("Hide tracking from my own Sent copy") && V.privacyPage({}, "https://x").includes("moves the original to Trash"), "");
+
+console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
+if (results.some(r => !r)) process.exit(1);
