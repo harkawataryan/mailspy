@@ -88,8 +88,9 @@ in the browser. It adds the tracking as you click Send.
 
 Loads your tracking into Gmail's web UI.
 
-1. `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
-   select the `extension/` folder.
+1. Install it from the [Chrome Web Store](https://chromewebstore.google.com/detail/mailspy-email-tracking-fo/dofghebhjogkhipgjkhnomhmaiplgdgi).
+   (For development: `chrome://extensions` → enable **Developer mode** →
+   **Load unpacked** → select the `extension/` folder.)
 2. Click the MailSpy icon → **Settings** → paste your **server URL** and the
    **API key**. Both are shown on the dashboard's Settings page.
 3. Compose in Gmail and hit Send. The extension registers the email with your

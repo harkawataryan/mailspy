@@ -756,7 +756,8 @@ export function settingsPage({ cfg, base, user, prefs, ip = "", notice = "", gma
 
   <div class="sect"><div><h3>Chrome extension</h3><p class="d">Tracks the emails you send from Gmail.</p></div>
     <div class="body">
-      ${cfg.extensionUrl ? `<p style="margin:0 0 12px"><a class="btn primary" href="${esc(cfg.extensionUrl)}" target="_blank" rel="noreferrer">Add to Chrome</a></p>` : `
+      ${cfg.extensionUrl ? `<p style="margin:0 0 12px"><a class="btn primary" href="${esc(cfg.extensionUrl)}" target="_blank" rel="noreferrer">Add to Chrome</a> <span class="muted" style="font-size:12.5px">from the Chrome Web Store; it updates itself</span></p>
+      <p class="muted" style="margin:0 0 12px;font-size:13.5px">Using a copy you downloaded from here before? Add the Web Store version, then remove the old one in <b style="color:var(--text)">chrome://extensions</b> (the one marked "Unpacked"), so you don't have two.</p>` : `
       <p style="margin:0 0 12px"><a class="btn primary" href="/extension.zip" download>Download the extension</a> <span class="muted" style="font-size:12.5px">version ${esc(cfg.extensionVersion || "")}</span></p>
       <ol class="muted" style="margin:0 0 12px 18px;padding:0;font-size:13.5px;line-height:1.6">
         <li>Unzip it. You get a <b style="color:var(--text)">mailspy-extension</b> folder; keep it somewhere it won't be deleted.</li>
