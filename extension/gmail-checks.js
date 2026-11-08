@@ -15,6 +15,7 @@
   window.__mailspyChecks = { alive: alive };
 
   var SERVER = MAILSPY_APP;   // from site.js
+  MAILSPY_READY.then(function () { SERVER = MAILSPY_APP; });   // a different MailSpy server, if chosen
   var CLS = "mailspy-ck";
   var REFRESH_MS = 45000;
   var checks = {};          // thread id (hex) -> { s: "sent"|"opened", n, c, last, replied }

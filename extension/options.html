@@ -40,6 +40,9 @@
   .who span { color:var(--muted); font-size:13px; }
   #initials { display:none; }
   .ok { color:var(--accent); font-size:13px; margin-top:12px; }
+  .srv { margin-top:14px; font-size:12.5px; color:var(--muted); }
+  .srv summary { cursor:pointer; text-align:center; }
+  .srv .hint, .hint { margin:8px 0; font-size:12.5px; color:var(--muted); }
   .foot { text-align:center; font-size:12px; margin-top:16px; }
   .foot a { color:var(--muted); }
   [hidden] { display:none !important; }
@@ -68,6 +71,12 @@
       <button id="go" type="submit">Sign in</button>
       <div class="err" id="err"></div>
     </form>
+    <details class="srv" id="srvBox">
+      <summary>Use a different MailSpy server</summary>
+      <p class="hint">Only if you run your own copy of MailSpy. Leave it empty to use <span id="defaultSrv"></span>.</p>
+      <input id="server" type="url" placeholder="https://mailspy.example.com" autocomplete="off" spellcheck="false">
+      <div class="err" id="srvErr"></div>
+    </details>
   </div>
 
   <div id="signedIn" hidden>
@@ -75,6 +84,7 @@
     <p class="lead">Emails you send from Gmail are now tracked.</p>
     <div class="card">
       <div class="who"><span id="initials"></span><b id="name"></b><span id="mail"></span></div>
+      <div class="hint" id="onServer" hidden></div>
       <div class="ok" id="justNow" hidden>Reload any open Gmail tabs to start tracking.</div>
       <button id="dash" type="button">Open dashboard</button>
       <button id="out" class="ghost" type="button">Sign out</button>

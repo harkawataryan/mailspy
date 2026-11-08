@@ -2,6 +2,15 @@
 // (content.js keeps its own copy so it stays a single self-contained file.)
 
 var SERVER = MAILSPY_APP;   // from site.js (mailspy.config.json)
+MAILSPY_READY.then(function () { SERVER = MAILSPY_APP; });   // a different MailSpy server, if chosen
+// ...and if it's changed later (options page), follow it here too.
+chrome.storage.onChanged.addListener((c, area) => {
+  if (area !== "local" || !(c.server || c.trackHost)) return;
+  chrome.storage.local.get(["server", "trackHost"]).then(v => {
+    MAILSPY_APP = v.server || MAILSPY_DEFAULT_APP; SERVER = MAILSPY_APP;
+    MAILSPY_TRACK_HOST = (v.server && v.trackHost) || MAILSPY_DEFAULT_TRACK_HOST; MAILSPY_TRACK = "https://" + MAILSPY_TRACK_HOST;
+  });
+});
 
 // Your sign-in for this browser: { apiKey, email, name }.
 // Older versions kept the API key in sync storage; move it over once.

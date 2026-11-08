@@ -21,6 +21,7 @@
   if (window.__mailspyFinder && window.__mailspyFinder.alive()) return;
 
   var SERVER = MAILSPY_APP;   // from site.js
+  MAILSPY_READY.then(function () { SERVER = MAILSPY_APP; });   // a different MailSpy server, if chosen
 
   var CSS = `
     :host { all: initial; position: fixed; z-index: 2147483001; }

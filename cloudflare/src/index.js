@@ -196,7 +196,7 @@ async function handle(req, env, ctx) {
   }
 
   if (path === "/privacy") return html(views.privacyPage(cfg, base));
-  if (path === "/api/version") return json({ version: manifest.version, google: googleEnabled(cfg) });
+  if (path === "/api/version") return json({ version: manifest.version, google: googleEnabled(cfg), track: cfg.trackUrl || "" });   // track: for extensions pointed at this server
 
   // ---- Sign in with Google (also lets MailSpy add ✔ / ✔✔ labels in Gmail) ----
   // mode: signin | signup (with an invite code) | connect (signed-in user adding Gmail) | ext (the extension)

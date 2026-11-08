@@ -29,9 +29,11 @@ var TOKEN = "data-mailspy-token";
 
 var MAILSPY_SERVER = MAILSPY_APP;   // from site.js (mailspy.config.json)
 var TRACK_HOST = MAILSPY_TRACK_HOST;   // the address used inside emails (site.js)
+MAILSPY_READY.then(function () { MAILSPY_SERVER = MAILSPY_APP; TRACK_HOST = MAILSPY_TRACK_HOST; });
 
 // { server, apiKey } for the signed-in account (same storage as config.js).
 async function cfg() {
+  await MAILSPY_READY;   // the server this browser uses (site.js)
   let { apiKey } = await chrome.storage.local.get(["apiKey"]);
   if (!apiKey) apiKey = (await chrome.storage.sync.get(["apiKey"])).apiKey || "";
   return { server: MAILSPY_SERVER, apiKey };

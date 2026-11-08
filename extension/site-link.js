@@ -1,7 +1,7 @@
 // Runs only on <your MailSpy>/extension-link: after you sign in
 // with Google from the extension, that page carries your MailSpy key. Save it
 // (the same way the email + password sign-in does) and tell the page.
-(function () {
+MAILSPY_READY.then(function () {
   var box = document.getElementById("mailspy-ext-link");
   if (!box || location.origin !== MAILSPY_APP) return;
   var key = box.getAttribute("data-key") || "";
@@ -11,4 +11,4 @@
     email: box.getAttribute("data-email") || "",
     name: box.getAttribute("data-name") || "",
   }).then(function () { box.setAttribute("data-connected", "1"); });
-})();
+});

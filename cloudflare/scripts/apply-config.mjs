@@ -45,6 +45,20 @@ var MAILSPY_NAME = ${JSON.stringify(c.name)};
 var MAILSPY_APP = ${JSON.stringify(c.app)};                 // dashboard, sign-in and API
 var MAILSPY_TRACK = ${JSON.stringify(c.track)};             // the address used inside emails
 var MAILSPY_TRACK_HOST = ${JSON.stringify(new URL(c.track).host)};
+
+// Someone running their own MailSpy can point this extension at it instead
+// (Sign in page: "Use a different MailSpy server"). That choice is saved in
+// chrome.storage; every script waits for MAILSPY_READY before using the address.
+var MAILSPY_DEFAULT_APP = MAILSPY_APP;
+var MAILSPY_DEFAULT_TRACK_HOST = MAILSPY_TRACK_HOST;
+var MAILSPY_READY = (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local)
+  ? chrome.storage.local.get(["server", "trackHost"]).then(function (v) {
+      if (v.server && /^https:\\/\\/[^/]+$/.test(v.server)) {
+        MAILSPY_APP = v.server;
+        if (v.trackHost) { MAILSPY_TRACK_HOST = v.trackHost; MAILSPY_TRACK = "https://" + v.trackHost; }
+      }
+    }).catch(function () {})
+  : Promise.resolve();
 `;
 }
 
@@ -53,6 +67,9 @@ export function applyManifest(m, c) {
   m.name = `${c.name}: Email Tracking for Gmail`;
   m.homepage_url = `${app}/privacy`;
   m.host_permissions = ["https://mail.google.com/*", `${app}/*`];
+  // Asked for only when someone points the extension at their own MailSpy and
+  // signs in with Google there (options.js); never granted up front.
+  m.optional_host_permissions = ["https://*/*"];
   if (m.action) m.action.default_title = c.name;
   for (const cs of m.content_scripts || []) {
     if ((cs.js || []).includes("site-link.js")) cs.matches = [`${app}/extension-link*`];

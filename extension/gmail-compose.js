@@ -18,6 +18,7 @@
   window.__mailspyCompose = { alive: alive };
 
   var SERVER = MAILSPY_APP;   // from site.js
+  MAILSPY_READY.then(function () { SERVER = MAILSPY_APP; });   // a different MailSpy server, if chosen
   var MAX = 15 * 1024 * 1024;
 
   document.querySelectorAll(".mailspy-pdf-host").forEach(function (n) { n.remove(); });
@@ -1231,6 +1232,7 @@
   // With "Track every link" on in Settings, links start switched on instead.
   var MARK_ATTR = "data-mailspy-track";
   var OURS = [SERVER, MAILSPY_TRACK];
+  MAILSPY_READY.then(function () { OURS = [SERVER, MAILSPY_TRACK]; });
   var trackAll = false;
 
   // Settings > Gmail compose buttons: hide the ones you turned off. The last

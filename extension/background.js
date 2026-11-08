@@ -172,6 +172,22 @@ chrome.storage.onChanged.addListener((changes, area) => {
 chrome.notifications.onClicked.addListener(() => chrome.tabs.create({ url: SERVER + "/emailtrack" }));
 
 // The Gmail script pings this right after a send.
+// Your own MailSpy server (options.js): run the Google sign-in helper on its
+// /extension-link page, like the built-in server's (manifest content_scripts).
+// Only possible once you've let MailSpy read that site; Chrome remembers both.
+async function registerSiteLink() {
+  await MAILSPY_READY;
+  const id = "site-link-own-server";
+  try { await chrome.scripting.unregisterContentScripts({ ids: [id] }); } catch (e) {}
+  if (MAILSPY_APP === MAILSPY_DEFAULT_APP) return false;
+  if (!(await chrome.permissions.contains({ origins: [MAILSPY_APP + "/*"] }))) return false;
+  await chrome.scripting.registerContentScripts([{ id, matches: [MAILSPY_APP + "/extension-link*"], js: ["site.js", "site-link.js"], runAt: "document_end" }]);
+  return true;
+}
+chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (msg && msg.type === "register-site-link") { registerSiteLink().then(reply, () => reply(false)); return true; }
+});
+
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg === "poll") { poll(); reply(true); }
   if (msg === "openOptions") { chrome.runtime.openOptionsPage(); reply(true); }

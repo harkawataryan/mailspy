@@ -1,8 +1,9 @@
 # Running your own copy of MailSpy
 
-Your own MailSpy on your own domain, with your own Cloudflare account, database,
-Google sign-in and Chrome extension. Nothing is shared with the original: not
-the data, the accounts or the extension.
+Your own MailSpy on your own domain, with your own Cloudflare account, database
+and Google sign-in. Nothing is shared with the original: not the data, not the
+accounts. You don't need to build or publish an extension either. Install the
+published MailSpy extension and point it at your server (step 9).
 
 Everything that names a domain comes from one file, `mailspy.config.json` at the
 top of the repo. `npm run configure` (in `cloudflare/`) applies it to the
@@ -70,15 +71,31 @@ extension (`extension/site.js` and `manifest.json`) and to
    address wherever it says `mailspy.aryanh.dev`:
    - the redirect URI is `<app>/auth/google/callback`;
    - the privacy policy is `<app>/privacy`.
-9. **Install your extension:** `chrome://extensions` → **Developer mode** →
-   **Load unpacked** → your fork's `extension` folder. It talks only to your
-   `app` address, and it reloads itself after each of your deploys.
+9. **Install the extension and point it at your server:**
+   1. Install MailSpy from the
+      [Chrome Web Store](https://chromewebstore.google.com/detail/mailspy-email-tracking-fo/dofghebhjogkhipgjkhnomhmaiplgdgi).
+   2. On its sign-in page, open **Use a different MailSpy server** and enter
+      your `app` address, for example `https://mailspy.example.com`.
+   3. Sign in with your password, or with Google. With Google, Chrome first asks
+      to let MailSpy read your site, so it can pick up the sign-in.
 
-To share yours with friends: create invites at `<app>/admin`, add their Gmail as
-test users on your Google consent screen, and have them use the download in
-your Settings page. Or publish your own Web Store listing; see
-[chrome-web-store.md](chrome-web-store.md), using your own extension ID and
-secrets.
+   The extension then talks only to your server, and the setting stays per
+   browser. Your friends do the same with your address.
+
+   **If you're changing the extension itself:** load your fork's `extension`
+   folder instead (`chrome://extensions` → **Developer mode** → **Load
+   unpacked**). It uses your `mailspy.config.json` addresses by default and
+   reloads itself after each of your deploys.
+
+To share yours with friends:
+- Create invites at `<app>/admin`.
+- Add their Gmail as test users on your Google consent screen.
+- Have them install MailSpy from the Web Store and enter your `app` address as
+  their server.
+
+If you change the extension and want those changes in everyone's hands, publish
+your own Web Store listing ([chrome-web-store.md](chrome-web-store.md), with
+your own extension ID and secrets), or send your changes back as a pull request.
 
 ## Getting updates from the original
 
