@@ -17,7 +17,7 @@
 // before the API call; a claim left over from an interrupted run is only retried
 // after checking the draft still exists (if it's gone, it was sent).
 
-import { now } from "./util.js";
+import { now, shortCode } from "./util.js";
 import { ensureGoogleSchema, accessToken, gmail } from "./google.js";
 import { rewrite, b64urlToBin, binToB64url } from "./sentcopy.js";
 import { alertStmt } from "./tracking.js";
@@ -76,6 +76,68 @@ export function editRaw(raw, replace) {
   let hits = 0;
   const out = rewrite(raw, NL, (text, type) => { const r = editText(text, type, replace); hits += r.hits; return r.out; }, 0, ["text/plain", "text/html"]);
   return { raw: out === null ? raw : out, hits };
+}
+
+// ------------------------------------------------------------------ link tracking
+// Links copied out of an email open in Gmail come wrapped in Google's redirect
+// (https://www.google.com/url?q=REAL&source=gmail&ust=EXPIRY…). Once it expires,
+// recipients see a "Redirect notice" page instead of the site. Unwrap those.
+const GOOGLE_RE = /https?:\/\/www\.google\.com\/url\?q=([^&"'\s<>]+)(?:&(?:amp;)?[^"'\s<>]*)*/gi;
+export function unwrapGoogle(text) {
+  return text.replace(GOOGLE_RE, (m, q) => { try { return decodeURIComponent(q); } catch { return m; } });
+}
+const HREF = /(<a\b[^>]*?\bhref\s*=\s*)(["'])(.*?)\2/gis;
+// The raw message with Google redirects unwrapped and every web link turned into a
+// tracked one. track(url) returns the tracked address (the same one for the same url),
+// so the plain-text copy points where the HTML does. Links already on base stay.
+// Returns { raw, token (the open pixel's), changed }.
+export function linkRaw(raw, base, track) {
+  const NL = raw.includes("\r\n") ? "\r\n" : "\n";
+  const ours = base.replace(/\/$/, "") + "/";
+  const want = u => /^https?:\/\//i.test(u) && !u.startsWith(ours);
+  let token = null;
+  const out = rewrite(raw, NL, (text, type) => {
+    if (type === "text/html") {
+      const px = text.match(/\/img\/([A-Za-z0-9_-]{6,})\.gif/);
+      if (px) token = px[1];
+      return text.replace(HREF, (m, pre, q, href) => {
+        const url = unwrapGoogle(href.trim().replace(/&amp;/g, "&"));
+        return want(url) ? `${pre}${q}${track(url)}${q}` : (url === href ? m : `${pre}${q}${url.replace(/&/g, "&amp;")}${q}`);
+      });
+    }
+    // plain text: links appear as <url>
+    return unwrapGoogle(text).replace(/<(https?:\/\/[^>\s]+)>/g, (m, url) => want(url) ? `<${track(url)}>` : m);
+  }, 0, ["text/plain", "text/html"]);
+  return { raw: out === null ? raw : out, token, changed: out !== null };
+}
+
+// Track the links in queued drafts, a page at a time. Each draft's open pixel says
+// which email it is; its links are recorded against that email like any tracked link.
+export async function trackQueuedLinks(env, cfg, uid, base, after = 0, limit = 15) {
+  await ensureSendSchema(env.DB);
+  const token = await tokenFor(env, cfg, uid);
+  if (!token) return { error: "Connect Gmail first." };
+  const rows = (await env.DB.prepare("SELECT id, draft_id, to_addr FROM send_queue WHERE user_id=? AND state='queued' AND id>? ORDER BY id LIMIT ?")
+    .bind(uid, after, limit).all()).results;
+  const results = [];
+  for (const r of rows) {
+    try {
+      const d = await gmail(token, `/drafts/${r.draft_id}?format=raw`);
+      if (!d || !d.message) { results.push({ to: r.to_addr, error: "draft not found" }); continue; }
+      const raw = b64urlToBin(d.message.raw);
+      const px = linkRaw(raw, base, u => u).token;    // dry run: find the email first
+      const email = px && await env.DB.prepare("SELECT id FROM emails WHERE token=? AND user_id=?").bind(px, uid).first();
+      if (!email) { results.push({ to: r.to_addr, error: "no MailSpy pixel in this draft" }); continue; }
+      const codes = new Map();
+      const res = linkRaw(raw, base, u => { if (!codes.has(u)) codes.set(u, shortCode(7)); return base.replace(/\/$/, "") + "/" + codes.get(u); });
+      if (!res.changed) { results.push({ to: r.to_addr, links: 0 }); continue; }
+      if (codes.size) await env.DB.batch([...codes].map(([u, c]) => env.DB.prepare("INSERT INTO links(email_id,token,url) VALUES(?,?,?)").bind(email.id, c, u)));
+      await gmail(token, `/drafts/${r.draft_id}`, { method: "PUT", body: JSON.stringify({ id: r.draft_id, message: { raw: binToB64url(res.raw), threadId: d.message.threadId } }) });
+      results.push({ to: r.to_addr, links: codes.size, urls: [...codes.keys()] });
+    } catch (e) { results.push({ to: r.to_addr, error: String(e.message || e).slice(0, 200) }); }
+  }
+  const next = rows.length === limit ? rows[rows.length - 1].id : null;
+  return { results, next };
 }
 
 // ------------------------------------------------------------------ queue

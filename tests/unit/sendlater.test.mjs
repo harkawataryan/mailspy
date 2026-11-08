@@ -149,5 +149,25 @@ const sendsBefore = calls.filter(c => c === "POST /drafts/send").length;
 await SL.sendDue(env, cfg, at + 40);
 check("stale claim whose draft is gone: marked sent without sending again", (await SL.listQueue(db, 1)).find(r => r.draft_id === "d8").state === "sent" && calls.filter(c => c === "POST /drafts/send").length === sendsBefore, "");
 
+// ---- link tracking: unwrap Gmail's google.com/url redirect, then track the link
+const GURL = "https://www.google.com/url?q=https://aryanh.dev&source=gmail&ust=1794093214714000&sa=E";
+const lhtml = `<div>Hi Kai, my portfolio at <a href="${GURL.replace(/&/g, "&amp;")}" target="_blank">aryanh.dev</a> or <a href="mailto:x@y.com">mail</a>.</div><img src="https://go.aryanh.dev/img/LINKTOK1.gif" width="1" height="1">`;
+const LRAW = RAW.replace(qp(html), qp(lhtml)).replace("I'd love to work on infra.", `my portfolio at aryanh.dev\r\n<${GURL}>)`).replace(/jane@acme\.com/g, "kai@links.com");
+const lr = SL.linkRaw(LRAW, "https://go.aryanh.dev", u => "https://go.aryanh.dev/T_" + u.length);
+const lh = decodeQp(lr.raw.split('quoted-printable\r\n\r\n')[1].split("\r\n--ALT--")[0]);
+check("linkRaw: Google redirect unwrapped and tracked in HTML, mailto left", lr.token === "LINKTOK1" && lh.includes('href="https://go.aryanh.dev/T_18"') && lh.includes('href="mailto:x@y.com"') && !lh.includes("google.com"), lh);
+check("linkRaw: plain text points at the tracked link too; pdf untouched", lr.raw.includes("<https://go.aryanh.dev/T_18>") && !lr.raw.includes("google.com/url") && lr.raw.includes(PDF), "");
+check("linkRaw: running it again changes nothing", !SL.linkRaw(lr.raw, "https://go.aryanh.dev", u => "X").changed, "");
+sqlite.prepare("INSERT INTO emails(token,to_addr,subject,created_at,user_id) VALUES('LINKTOK1','kai@links.com','s',0,1)").run();
+drafts.set("d9", { to: "kai@links.com", raw: LRAW });
+await SL.queueDrafts(env, cfg, 1, ["kai@links.com"], at + 9999);
+let tl = await SL.trackQueuedLinks(env, cfg, 1, "https://go.aryanh.dev");
+const kai = tl.results.find(r => r.to === "kai@links.com");
+const lrow = sqlite.prepare("SELECT l.token, l.url FROM links l JOIN emails e ON e.id=l.email_id WHERE e.token='LINKTOK1'").all();
+const d9 = drafts.get("d9").raw;
+check("trackQueuedLinks: link recorded for this email, draft points at it", kai.links === 1 && lrow.length === 1 && lrow[0].url === "https://aryanh.dev" && decodeQp(d9).includes(`https://go.aryanh.dev/${lrow[0].token}`) && d9.includes(`<https://go.aryanh.dev/${lrow[0].token}>`), [kai, lrow]);
+tl = await SL.trackQueuedLinks(env, cfg, 1, "https://go.aryanh.dev");
+check("trackQueuedLinks again: no new links, draft not rewritten", tl.results.find(r => r.to === "kai@links.com").links === 0 && sqlite.prepare("SELECT COUNT(*) n FROM links").get().n === 1, tl);
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 if (results.some(r => !r)) process.exit(1);

@@ -11,7 +11,7 @@ import { sessionUser, apiUser, checkPassword, hashPassword, makeSession, session
          loginBlocked, noteLoginFailure, newApiKey, newInviteCode } from "./auth.js";
 import { PIXEL_GIF, prepareEmail, recordEvent, markSelfView, markScheduled, runScheduled, placeOf, settledAlerts } from "./tracking.js";
 import { hideTracking, sweepSentCopies } from "./sentcopy.js";
-import { queueDrafts, listQueue, cancelQueued, editQueued, sendDue } from "./sendlater.js";
+import { queueDrafts, listQueue, cancelQueued, editQueued, trackQueuedLinks, sendDue } from "./sendlater.js";
 import * as views from "./views.js";
 import { prefsFor, prefsFromForm, accountAllowed, trackedAccounts } from "./prefs.js";
 import { findPerson, findRecruiters, liRole } from "./finder.js";
@@ -416,6 +416,10 @@ async function handle(req, env, ctx) {
       const b = await readBody(req);
       return json(await editQueued(env, cfg, uid, b.replace, Number(b.after) || 0));
     }
+    if (path === "/api/sendlater/links" && method === "POST") {
+      const b = await readBody(req);
+      return json(await trackQueuedLinks(env, cfg, uid, tbase, Number(b.after) || 0));
+    }
     if (path === "/api/sendlater/cancel" && method === "POST") {
       const b = await readBody(req);
       return json(await cancelQueued(db, uid, (Array.isArray(b.ids) ? b.ids : []).map(Number)));
@@ -638,6 +642,10 @@ async function handle(req, env, ctx) {
   if (path === "/sendlater/edit" && method === "POST") {
     const b = await readBody(req);
     return json(await editQueued(env, cfg, uid, b.replace, Number(b.after) || 0));
+  }
+  if (path === "/sendlater/links" && method === "POST") {
+    const b = await readBody(req);
+    return json(await trackQueuedLinks(env, cfg, uid, tbase, Number(b.after) || 0));
   }
   if (path === "/sendlater.json" && method === "GET") return json(await listQueue(db, uid));
   if (path === "/sendlater/cancel" && method === "POST") {
