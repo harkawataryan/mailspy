@@ -8,6 +8,8 @@ cloudflare/.dev.vars
 *.env
 # build output (extension zips are rebuilt with `npm run package`)
 dist/*.zip
+# database backups (npm run backup): everyone's private data, never commit
+backups/
 # misc
 __pycache__/
 *.pyc

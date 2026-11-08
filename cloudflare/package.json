@@ -14,7 +14,8 @@
     "store-assets": "node scripts/store-assets.mjs",
     "google-secrets": "wrangler secret put GOOGLE_CLIENT_ID && wrangler secret put GOOGLE_CLIENT_SECRET",
     "test": "node ../tests/run-unit.mjs",
-    "test:e2e": "node ../tests/e2e/run.mjs"
+    "test:e2e": "node ../tests/e2e/run.mjs",
+    "backup": "node scripts/backup.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

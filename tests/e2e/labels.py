@@ -87,8 +87,9 @@ with db() as c:
 check("other user can't change them", r["gmail_thread"] == "Tb" and r["label_state"] == "opened", dict(r))
 
 _, _, b = req("GET", "/settings", hdr={"Cookie": OWN})
-check("settings shows the Gmail labels section with the script", b"Gmail labels" in b and b"function setup()" in b and KEY.encode() in b, "")
-check("settings says connected after a check-in", b"Connected." in b, "")
+# The Apps Script labels were replaced by Google sign-in ("Gmail checkmarks"); the
+# /api/labels endpoints above stay for anyone still running the old script.
+check("settings shows Gmail checkmarks (no Apps Script any more)", b"Gmail checkmarks" in b and b"function setup()" not in b, "")
 print(f"\n{sum(results)}/{len(results)} passed")
 import sys as _s
 _s.exit(0 if all(results) else 1)

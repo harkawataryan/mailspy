@@ -42,14 +42,28 @@ if ((await askHidden("Repeat it: ")) !== pw) {
   process.exit(1);
 }
 
+// SESSION_SECRET signs everyone's sign-in AND is the key that encrypts each
+// user's Gmail access (src/google.js). Replacing it signs everyone out and
+// silently disconnects Gmail checkmarks / auto-try for everyone, so it is only
+// created by a full setup (after a warning), never by --password-only.
+if (!passwordOnly) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ok = await new Promise(r => rl.question(
+    "\nThis also creates a NEW session secret and API key. On a MailSpy that's already running, that signs\n" +
+    "everyone out and disconnects everyone's Gmail (they'd have to reconnect). To change only your\n" +
+    "password, run `npm run set-password` instead.\nContinue? (y/N) ",
+    a => { rl.close(); r(/^y(es)?$/i.test(a.trim())); }));
+  if (!ok) { console.log("Nothing changed."); process.exit(0); }
+}
+
 const salt = randomBytes(16);
 const hash = pbkdf2Sync(pw, salt, ITERATIONS, 32, "sha256");
 const secrets = {
   PASSWORD_HASH: `pbkdf2_sha256$${ITERATIONS}$${salt.toString("base64")}$${hash.toString("base64")}`,
-  SESSION_SECRET: randomBytes(32).toString("base64url"),
 };
 let apiKey = "";
 if (!passwordOnly) {
+  secrets.SESSION_SECRET = randomBytes(32).toString("base64url");
   apiKey = randomBytes(24).toString("base64url");
   secrets.API_KEY = apiKey;
 }

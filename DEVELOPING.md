@@ -22,5 +22,13 @@
   `MAILSPY_TEST_PORT=8790 npm run test:e2e`.
 - **Secrets** live in Cloudflare (`npx wrangler secret put …`), never in the repo.
   Local tests write throwaway ones to `cloudflare/.dev.vars` (git-ignored).
+- **Never replace `SESSION_SECRET` on a running MailSpy.** It signs sign-ins *and* encrypts every
+  user's Gmail access (`src/google.js`); a new one signs everyone out and silently disconnects
+  everyone's Gmail checkmarks and auto-try. `npm run set-password` leaves it alone; a full
+  `npm run setup` warns first.
+- **Backups:** `npm run backup` downloads the live database to `backups/` (git-ignored, private).
+  Cloudflare D1 also has point-in-time restore ("Time Travel"):
+  `npx wrangler d1 time-travel info mailspy`, then `... restore mailspy --timestamp=<unix>`
+  (overwrites the database: back up first).
 - **Privacy policy** (`privacyPage` in `src/views.js`) must say what MailSpy does with Gmail
   access. Update it whenever Gmail usage changes (Google requires it).

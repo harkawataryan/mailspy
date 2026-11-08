@@ -25,7 +25,7 @@ KEY = json.loads(req("POST", "/api/login", {"email": "owner@x.example", "passwor
 K = {"X-API-Key": KEY}
 
 s, _, b = req("GET", "/api/me", hdr=K)
-check("track_pdfs on by default, sent to the extension", json.loads(b).get("track_pdfs") is True, b)
+check("PDF tiles off by default (attachments stay normal), sent to the extension", json.loads(b).get("pdf_tiles") is False, b)
 
 pdf = b"%PDF-1.4\n%test\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF"
 s, _, b = req("POST", "/api/docs", pdf, {**K, "Content-Type": "application/pdf", "X-Filename": "Chapter%203I%20(1).pdf"})
@@ -67,12 +67,12 @@ check("thumbnail image left alone", f'src="{base}/d/{d["token"]}/p.png"' in p["h
 s, _, b = req("GET", f"/d/{d['token']}?r={p['token']}")
 check("viewer: dark Gmail-style page, file name, no MailSpy", s == 200 and b"#3c3c3c" in b and b"Chapter 3I (1).pdf" in b and b"MailSpy" not in b and b'class="ic">PDF' in b, s)
 
-# setting off
-form("/settings", {"action": "prefs", "prefetch_seconds": "12", "notify_open": "on"}, OWN)
+# setting on
+form("/settings", {"action": "prefs", "prefetch_seconds": "12", "notify_open": "on", "pdf_tiles": "on"}, OWN)
 s, _, b = req("GET", "/api/me", hdr=K)
-check("turning the setting off reaches the extension", json.loads(b).get("track_pdfs") is False, b)
+check("turning PDF tiles on reaches the extension", json.loads(b).get("pdf_tiles") is True, b)
 s, _, b = req("GET", "/settings", hdr={"Cookie": OWN})
-check("settings shows the switch", b'name="track_pdfs"' in b and b"Track PDFs I attach in Gmail" in b, "")
+check("settings shows the switch, on", b'name="pdf_tiles" checked' in b, "")
 
 # deleting the doc removes the thumbnail
 form(f"/docs/{d['id']}/delete", {}, OWN)

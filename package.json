@@ -10,6 +10,7 @@
     "logs": "npm --prefix cloudflare run logs",
     "google-secrets": "npm --prefix cloudflare run google-secrets",
     "test": "npm --prefix cloudflare test",
-    "test:e2e": "npm --prefix cloudflare run test:e2e --"
+    "test:e2e": "npm --prefix cloudflare run test:e2e --",
+    "backup": "npm --prefix cloudflare run backup"
   }
 }
