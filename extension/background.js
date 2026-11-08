@@ -9,8 +9,8 @@
 
 importScripts("config.js");
 
-const NOTIFY = ["open", "click", "doc", "link", "spike", "revived", "followup", "retry"];
-const BADGE_KINDS = ["open", "click", "doc", "link"];
+const NOTIFY = ["open", "click", "reply", "doc", "link", "spike", "revived", "followup", "retry"];
+const BADGE_KINDS = ["open", "click", "reply", "doc", "link"];
 
 // Your notification choices from Settings, refreshed every 10 minutes.
 async function notifyPrefs(apiKey) {

@@ -9,33 +9,45 @@
 import { settings, now, json, html, notFound, redirect, readBody, CORS, esc } from "./util.js";
 import { sessionUser, apiUser, checkPassword, hashPassword, makeSession, sessionCookie, SESSION_MAX_AGE,
          loginBlocked, noteLoginFailure, newApiKey, newInviteCode } from "./auth.js";
-import { PIXEL_GIF, prepareEmail, recordEvent, markSelfView, markScheduled, runScheduled } from "./tracking.js";
+import { PIXEL_GIF, prepareEmail, recordEvent, markSelfView, markScheduled, runScheduled, placeOf } from "./tracking.js";
+import { hideTracking, sweepSentCopies } from "./sentcopy.js";
 import * as views from "./views.js";
 import { prefsFor, prefsFromForm } from "./prefs.js";
 import { findPerson, findRecruiters } from "./finder.js";
 import { cleanPlan, startRetry, retryByToken, sweepRetries } from "./retry.js";
 import { googleEnabled, authUrl, makeState, readState, exchangeCode, saveGmail, disconnectGmail, gmailStatus,
          ensureGoogleSchema, labelEmail, sweepLabels } from "./google.js";
+import { sweepReplies, refreshReply } from "./replies.js";
+import { loadPeople, loadPerson, groupCompanies, companyNames, PERSONAL } from "./people.js";
 import { listTemplates, getTemplate, saveTemplate, deleteTemplate, markUsed, templatesFor } from "./templates.js";
 import { pendingLabels, saveLabels } from "./labels.js";   // older Apps Script labels (kept for anyone still running it)
 import { uploadDoc, deleteDoc, docBeat, createLink, deleteLink, recordLinkClick, MAX_PDF_BYTES,
          saveThumb, thumbResponse, MAX_THUMB_BYTES } from "./docs.js";
+import { readFilters, emailListPage, emailsCsv, emailEventsCsv, docsCsv, linksCsv, DOCS_SQL, LINKS_SQL } from "./lists.js";
+import { classifyAgent } from "./tracking.js";
 
 // Everything a person has seen happen: email opens/clicks, PDF views, tracked-link clicks.
 const ACTIVITY_SQL = `SELECT * FROM (
-  SELECT v.id, v.kind, v.ts, v.geo, v.is_bot, v.flagged, e.id AS email_id, e.to_addr, e.to_name, e.subject,
+  SELECT v.id, v.kind, v.ts, v.geo, v.user_agent, v.is_bot, v.flagged, e.id AS email_id, e.to_addr, e.to_name, e.subject,
          NULL AS item_id, NULL AS title
     FROM events v JOIN emails e ON e.id=v.email_id WHERE e.user_id=?1
   UNION ALL
-  SELECT dv.id, 'doc', dv.ts, dv.geo, dv.is_self, CASE WHEN dv.is_self THEN 'self' END, e.id, e.to_addr, e.to_name, e.subject,
+  SELECT dv.id, 'doc', dv.ts, dv.geo, dv.user_agent, dv.is_self, CASE WHEN dv.is_self THEN 'self' END, e.id, e.to_addr, e.to_name, e.subject,
          d.id, d.filename
     FROM doc_views dv JOIN docs d ON d.id=dv.doc_id LEFT JOIN emails e ON e.id=dv.email_id WHERE d.user_id=?1
   UNION ALL
-  SELECT c.id, 'link', c.ts, c.geo, c.is_bot, CASE WHEN c.is_bot THEN 'scanner' END, NULL, NULL, NULL, NULL,
+  SELECT c.id, 'link', c.ts, c.geo, c.user_agent, c.is_bot, CASE WHEN c.is_bot THEN 'scanner' END, NULL, NULL, NULL, NULL,
          l.id, COALESCE(l.label, l.url)
     FROM tlink_clicks c JOIN tlinks l ON l.id=c.tlink_id WHERE l.user_id=?1
 ) ORDER BY ts DESC LIMIT ?2`;
 import manifest from "../../extension/manifest.json";
+
+// An activity row as the extension gets it: location shown as "via Gmail" for
+// proxy fetches, and no user agent.
+function shownActivity(v) {
+  const { user_agent, ...rest } = v;
+  return { ...rest, geo: placeOf(v) };
+}
 
 const EMAIL_COLS = "id,to_addr,to_name,subject,created_at,scheduled_at,user_id";
 const GOOGLE_ONLY = "!google";   // password_hash of accounts made with Google (no password yet)
@@ -358,10 +370,12 @@ async function handle(req, env, ctx) {
         await startRetry(db, out.id, plan, Number(data.scheduled_at) || null);
         out.retry = true;
       }
-      // Gmail sends a few seconds after this; then mark it ✔ in their Sent mail.
+      // Gmail sends a few seconds after this; then mark it ✔ in their Sent mail,
+      // and swap their Sent copy for one without the tracking image (sentcopy.js).
       // (Anything missed here is picked up by the scheduled sweep.)
       if (out.id && googleEnabled(cfg)) {
-        log(new Promise(r => setTimeout(r, 20000)).then(() => labelEmail(env, cfg, out.id)));
+        log(new Promise(r => setTimeout(r, 20000)).then(() => labelEmail(env, cfg, out.id))
+          .then(() => hideTracking(env, cfg, out.id, [tbase, base])));
       }
       return json(out);
     }
@@ -422,7 +436,8 @@ async function handle(req, env, ctx) {
       return st ? json(st) : json({ error: "not found" }, 404);
     }
     if (path === "/api/activity") {
-      return json((await db.prepare(ACTIVITY_SQL).bind(uid, 50).all()).results);
+      // "via Gmail" etc. instead of the mail provider's data centre (the extension shows geo as is)
+      return json((await db.prepare(ACTIVITY_SQL).bind(uid, 50).all()).results.map(shownActivity));
     }
     if (path === "/api/alerts") {
       const since = parseInt(url.searchParams.get("since") || "", 10);
@@ -443,7 +458,7 @@ async function handle(req, env, ctx) {
         db.prepare("SELECT * FROM links WHERE email_id=? ORDER BY id").bind(id),
         db.prepare("SELECT * FROM events WHERE email_id=? ORDER BY ts DESC").bind(id),
       ]);
-      return json({ email: e, links: links.results, events: events.results });
+      return json({ email: e, links: links.results, events: events.results.map(v => ({ ...v, geo: placeOf(v) })) });
     }
     return json({ error: "not found" }, 404);
   }
@@ -454,27 +469,56 @@ async function handle(req, env, ctx) {
   if (!user) return path === "/" ? redirect(cfg.loginPath) : notFound(); // bare address -> sign in
   const uid = user.id;
 
+  // Emails list: ?q= search, ?status=, ?days=, ?page= (src/lists.js)
   if (path === "/" && method === "GET") {
-    const [emails, totals, activity, reminders, maxA, week] = await db.batch([
-      db.prepare("SELECT * FROM emails WHERE user_id=? ORDER BY id DESC LIMIT 200").bind(uid),
+    const filters = readFilters(url.searchParams);
+    if (filters.status === "replied") await ensureGoogleSchema(db);   // replied_at
+    const list = await emailListPage(db, uid, filters);
+    const [totals, activity, reminders, maxA, week] = await db.batch([
       db.prepare("SELECT COUNT(*) AS total, SUM(opens>0) AS opened, SUM(opens) AS opens, SUM(clicks) AS clicks FROM emails WHERE user_id=?").bind(uid),
       db.prepare(ACTIVITY_SQL).bind(uid, 30),
-      db.prepare("SELECT * FROM alerts WHERE user_id=? AND kind IN ('followup','spike','revived') ORDER BY id DESC LIMIT 6").bind(uid),
+      db.prepare("SELECT * FROM alerts WHERE user_id=? AND kind IN ('reply','followup','spike','revived') ORDER BY id DESC LIMIT 6").bind(uid),
       db.prepare("SELECT COALESCE(MAX(id),0) AS m FROM alerts WHERE user_id=?").bind(uid),
       db.prepare("SELECT COUNT(*) AS sent FROM emails WHERE user_id=? AND created_at>=?").bind(uid, now() - 7 * 86400),
     ]);
     return html(views.dashboard({
       user, cfg, prefs: await prefsFor(db, cfg, uid),
-      emails: emails.results, totals: totals.results[0] || {}, activity: activity.results,
+      emails: list.emails, matched: list.matched, filters, totals: totals.results[0] || {}, activity: activity.results,
       reminders: reminders.results, maxAlert: maxA.results[0].m, week: week.results[0] || {},
     }));
   }
 
-  m = path.match(/^\/email\/(\d+)$/);
+  // ---- CSV downloads (signed-in only, this user's data only) ----
+  if (path === "/emails.csv" && method === "GET") {
+    const filters = readFilters(url.searchParams);
+    if (filters.status === "replied") await ensureGoogleSchema(db);   // replied_at
+    return emailsCsv(db, uid, filters);
+  }
+  m = path.match(/^\/email\/(\d+)\.csv$/);
   if (m && method === "GET") {
     const id = parseInt(m[1], 10);
     const e = await db.prepare("SELECT * FROM emails WHERE id=? AND user_id=?").bind(id, uid).first();
     if (!e) return notFound();
+    const ev = await db.prepare(`SELECT v.*, l.url FROM events v LEFT JOIN links l ON l.id=v.link_id
+                                 WHERE v.email_id=? ORDER BY v.ts DESC`).bind(id).all();
+    return emailEventsCsv(e, ev.results, classifyAgent);
+  }
+  if (path === "/docs.csv" && method === "GET") return docsCsv((await db.prepare(DOCS_SQL).bind(uid).all()).results, tbase);
+  if (path === "/links.csv" && method === "GET") return linksCsv((await db.prepare(LINKS_SQL).bind(uid).all()).results, tbase);
+
+  m = path.match(/^\/email\/(\d+)$/);
+  if (m && method === "GET") {
+    const id = parseInt(m[1], 10);
+    let e = await db.prepare("SELECT * FROM emails WHERE id=? AND user_id=?").bind(id, uid).first();
+    if (!e) return notFound();
+    // Look for a reply in Gmail now (at most ~2.5s; anything slower finishes in the background
+    // and the page's live updates pick up the "replied" alert).
+    if (googleEnabled(cfg) && !e.replied_at) {
+      const work = refreshReply(env, cfg, e).catch(err => console.error("reply refresh:", err));
+      const done = await Promise.race([work.then(() => true), new Promise(r => setTimeout(() => r(false), 2500))]);
+      if (!done) ctx.waitUntil(work);
+      else e = (await db.prepare("SELECT * FROM emails WHERE id=? AND user_id=?").bind(id, uid).first()) || e;
+    }
     const [links, events, maxA] = await db.batch([
       db.prepare("SELECT * FROM links WHERE email_id=? ORDER BY id").bind(id),
       db.prepare(`SELECT v.*, l.url FROM events v LEFT JOIN links l ON l.id=v.link_id
@@ -515,9 +559,13 @@ async function handle(req, env, ctx) {
   if (path === "/report" && method === "GET") {
     const until = now();
     const since = until - 7 * 86400;
-    const [sent, opened, clicks, bots, top] = await db.batch([
+    await ensureGoogleSchema(db);   // replied_at
+    const [sent, opened, replied, replies, clicks, bots, top] = await db.batch([
       db.prepare("SELECT COUNT(*) AS n FROM emails WHERE user_id=? AND created_at>=?").bind(uid, since),
       db.prepare("SELECT COUNT(*) AS n FROM emails WHERE user_id=? AND created_at>=? AND opens>0").bind(uid, since),
+      db.prepare("SELECT COUNT(*) AS n FROM emails WHERE user_id=? AND created_at>=? AND replied_at IS NOT NULL").bind(uid, since),
+      db.prepare(`SELECT id, subject, to_addr, to_name, replied_at, replied_by FROM emails
+                  WHERE user_id=? AND replied_at>=? ORDER BY replied_at DESC LIMIT 10`).bind(uid, since),
       db.prepare(`SELECT COUNT(*) AS n FROM events v JOIN emails e ON e.id=v.email_id
                   WHERE e.user_id=? AND v.kind='click' AND v.is_bot=0 AND v.ts>=?`).bind(uid, since),
       db.prepare(`SELECT COUNT(*) AS n FROM events v JOIN emails e ON e.id=v.email_id
@@ -526,9 +574,34 @@ async function handle(req, env, ctx) {
                   WHERE e.user_id=? AND v.kind='open' AND v.is_bot=0 AND v.ts>=? GROUP BY e.id ORDER BY opens DESC LIMIT 5`).bind(uid, since),
     ]);
     return html(views.report({
-      user, sent: sent.results[0].n, opened: opened.results[0].n, clicks: clicks.results[0].n,
-      bots: bots.results[0].n, top: top.results, since, until,
+      user, sent: sent.results[0].n, opened: opened.results[0].n, replied: replied.results[0].n, replies: replies.results,
+      clicks: clicks.results[0].n, bots: bots.results[0].n, top: top.results, since, until,
     }));
+  }
+
+  // ---- people and companies ----
+  if ((path === "/people" || path === "/companies") && method === "GET") {
+    const people = await loadPeople(db, uid);
+    const names = await companyNames(env, people.filter(p => !p.personal).map(p => p.org));
+    const companies = groupCompanies(people, names);
+    return html(path === "/people" ? views.peoplePage({ user, people, companies, names }) : views.companiesPage({ user, companies }));
+  }
+  m = path.match(/^\/(people|companies)\/([^/]+)$/);
+  if (m && method === "GET") {
+    let key;
+    try { key = decodeURIComponent(m[2]).trim().toLowerCase(); } catch { return notFound(); }
+    if (m[1] === "people") {
+      const r = await loadPerson(db, uid, key);
+      if (!r) return notFound();
+      const p = r.person;
+      const company = p.personal ? { key: PERSONAL, name: "Personal addresses" }
+        : { key: p.org, name: (await companyNames(env, [p.org])).get(p.org) };
+      return html(views.personPage({ user, person: p, company, emails: r.emails }));
+    }
+    const people = (await loadPeople(db, uid)).filter(p => (key === PERSONAL ? p.personal : !p.personal && p.org === key));
+    if (!people.length) return notFound();
+    const c = groupCompanies(people, key === PERSONAL ? new Map() : await companyNames(env, [key]))[0];
+    return html(views.companyPage({ user, company: c }));
   }
 
   if (path === "/settings") {
@@ -589,11 +662,7 @@ async function handle(req, env, ctx) {
         if (out.error) notice = `<div class="note bad">${esc(out.error)}</div>`; else created = out;
       }
     }
-    const docs = await db.prepare(`SELECT d.*,
-        (SELECT COUNT(*) FROM doc_views v WHERE v.doc_id=d.id AND v.is_self=0) AS views,
-        (SELECT SUM(seconds) FROM doc_views v WHERE v.doc_id=d.id AND v.is_self=0) AS seconds,
-        (SELECT MAX(ts) FROM doc_views v WHERE v.doc_id=d.id AND v.is_self=0) AS last_view
-      FROM docs d WHERE d.user_id=? ORDER BY d.id DESC`).bind(uid).all();
+    const docs = await db.prepare(DOCS_SQL).bind(uid).all();
     return html(views.docsPage({ user, base: tbase, docs: docs.results, notice, created }));
   }
   m = path.match(/^\/docs\/(\d+)(\/delete)?$/);
@@ -632,10 +701,7 @@ async function handle(req, env, ctx) {
       const out = await createLink(db, uid, form.url, form.label);
       if (out.error) notice = `<div class="note bad">${esc(out.error)}</div>`; else { created = out; form = {}; }
     }
-    const links = await db.prepare(`SELECT l.*,
-        (SELECT COUNT(*) FROM tlink_clicks c WHERE c.tlink_id=l.id AND c.is_bot=0) AS clicks,
-        (SELECT MAX(ts) FROM tlink_clicks c WHERE c.tlink_id=l.id AND c.is_bot=0) AS last_click
-      FROM tlinks l WHERE l.user_id=? ORDER BY l.id DESC`).bind(uid).all();
+    const links = await db.prepare(LINKS_SQL).bind(uid).all();
     return html(views.linksPage({ user, base: tbase, links: links.results, notice, created, form }));
   }
   m = path.match(/^\/links\/(\d+)(\/delete)?$/);
@@ -756,8 +822,12 @@ export default {
   },
   async scheduled(event, env, ctx) {
     const cfg = settings(env);
-    ctx.waitUntil(runScheduled(env.DB, cfg));
-    ctx.waitUntil(sweepLabels(env, cfg).catch(err => console.error("label sweep:", err)));
+    // Replies first, so follow-up reminders never go out for an email that was just answered.
+    ctx.waitUntil(sweepReplies(env, cfg).catch(err => console.error("reply sweep:", err))
+      .then(() => runScheduled(env.DB, cfg)));
+    // Labels first: the Sent-copy swap needs the message the label sweep finds.
+    ctx.waitUntil(sweepLabels(env, cfg).catch(err => console.error("label sweep:", err))
+      .then(() => sweepSentCopies(env, cfg)).catch(err => console.error("sent copy sweep:", err)));
     ctx.waitUntil(sweepRetries(env, cfg).catch(err => console.error("auto-try sweep:", err)));
   },
 };

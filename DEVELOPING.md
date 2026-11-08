@@ -4,6 +4,7 @@
 - `cloudflare/` – the Worker: dashboard, tracking, Gmail labels/auto-try (Google API), finder, templates.
   - `src/index.js` routes, `src/views.js` all HTML, `src/tracking.js` opens/clicks/alerts,
     `src/google.js` Google sign-in + Gmail checkmarks, `src/retry.js` auto-try,
+    `src/sentcopy.js` takes the tracking image out of your own Sent copy,
     `src/finder.js` email finder, `src/templates.js`, `src/prefs.js` per-user settings.
 - `extension/` – the Chrome extension (content scripts run in Gmail).
 - `tests/` – `npm test` (unit, fast, no network) and `npm run test:e2e` (local Worker + Python).

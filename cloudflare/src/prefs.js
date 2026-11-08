@@ -4,6 +4,7 @@
 export const NOTIFY_KINDS = [
   ["open", "Email opened"],
   ["click", "Link in an email clicked"],
+  ["reply", "Someone replied (needs Gmail connected)"],
   ["doc", "Tracked PDF viewed"],
   ["link", "Tracked link clicked"],
   ["spike", "Open spike (opened again and again)"],
@@ -23,6 +24,7 @@ export function defaultPrefs(cfg) {
     show_automated: true,
     allow_downloads: true,
     pdf_tiles: false,                           // on: PDFs attached in Gmail are sent as tracked link tiles; off: normal attachments
+    hide_sent_pixel: true,                      // with Gmail connected: your Sent copy gets the tracking image taken out (sentcopy.js)
     notify: Object.fromEntries(NOTIFY_KINDS.map(([k]) => [k, true])),
     ignore_recipients: [],                      // "name@x.com" or "@x.com"
     ignore_ips: [],
@@ -61,6 +63,7 @@ export function normalizePrefs(cfg, raw = {}) {
     show_automated: bool(r.show_automated, d.show_automated),
     allow_downloads: bool(r.allow_downloads, d.allow_downloads),
     pdf_tiles: bool(r.pdf_tiles, d.pdf_tiles),
+    hide_sent_pixel: bool(r.hide_sent_pixel, d.hide_sent_pixel),
     notify,
     ignore_recipients: cleanList(r.ignore_recipients, 200, /^[^\s@]*@[^\s@]+\.[^\s@]+$/),
     ignore_ips: cleanList(r.ignore_ips, 50, IP_RE),
@@ -90,6 +93,7 @@ export function prefsFromForm(cfg, form) {
     show_automated: form.show_automated === "on",
     allow_downloads: form.allow_downloads === "on",
     pdf_tiles: form.pdf_tiles === "on",
+    hide_sent_pixel: form.hide_sent_pixel === "on",
     notify,
     ignore_recipients: form.ignore_recipients,
     ignore_ips: form.ignore_ips,

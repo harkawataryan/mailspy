@@ -17,7 +17,18 @@ CREATE TABLE IF NOT EXISTS emails (
   scheduled_at  REAL,
   user_id       INTEGER,
   gmail_thread  TEXT,     -- Gmail thread id, found by the labels script
-  label_state   TEXT      -- Gmail label last applied: unopened | opened | clicked | nomatch
+  label_state   TEXT,     -- Gmail label last applied: unopened | opened | clicked | nomatch
+  -- Gmail columns (also added on first use by ensureGoogleSchema in src/google.js)
+  gmail_msg     TEXT,     -- the sent message's Gmail id, once found
+  gmail_label   TEXT,     -- label applied: sent | opened | nomatch
+  retry_json    TEXT,     -- auto-try plan and progress (src/retry.js)
+  sent_clean    TEXT,      -- tracking taken out of your own Sent copy: NULL | work:… | copy:… | err:n | done | none | big | failed (src/sentcopy.js)
+  -- replies, spotted in the sent message's Gmail thread (src/replies.js; also added on first use)
+  replied_at    REAL,     -- when the first reply arrived; NULL = no reply seen
+  replied_by    TEXT,     -- who replied: their name, or their address
+  replied_addr  TEXT,     -- who replied: their address
+  reply_thread  TEXT,     -- Gmail thread id of the sent message (cache)
+  reply_checked REAL      -- last time the thread was checked
 );
 CREATE INDEX IF NOT EXISTS idx_emails_followup ON emails(followup_done, opens, created_at);
 CREATE INDEX IF NOT EXISTS idx_emails_user ON emails(user_id, id);
@@ -41,7 +52,7 @@ CREATE TABLE IF NOT EXISTS events (
   geo        TEXT,
   ts         REAL NOT NULL,
   is_bot     INTEGER NOT NULL DEFAULT 0,
-  flagged    TEXT                      -- 'prefetch' | 'scanner' | 'self' | NULL
+  flagged    TEXT                      -- 'prefetch' | 'scanner' | 'self' | 'apple' (Apple Mail Privacy Protection, may be automatic) | NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_email ON events(email_id, ts);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
