@@ -22,9 +22,73 @@ const SCANNER_HINTS = [
 // recipient actually opens the message, so those fetches ARE counted. Automated
 // fetches are caught by timing instead: hits within prefetchWindow of sending,
 // clicks on several links within 2 seconds, and moments when you are viewing
-// the message yourself (reported by the Gmail extension).
+// the message yourself (reported by the Gmail extension). Apple Mail's proxy
+// is different: it fetches whether or not anyone reads (see isAppleProxy).
+// Your own views on other devices (the Gmail phone app) never reach the
+// pixel at all once the tracking is taken out of your Sent copy (sentcopy.js).
 const SELF_WINDOW = 20;   // seconds after a self-view during which opens are yours
 const SELF_LOOKBACK = 10; // seconds before a self-view to re-flag as yours
+
+// ---- Apple Mail Privacy Protection ----
+// With Mail Privacy Protection on (the default for most Apple Mail users),
+// Apple's servers fetch every image in a message, usually soon after delivery
+// but sometimes hours later (the device asks when it's on Wi-Fi and charging),
+// whether or not the person ever reads it. When they do read it, the image
+// comes from Apple's cache through the same proxy, so the two can't be told
+// apart. The rule here:
+//   1. The User-Agent is exactly "Mozilla/5.0". Apple's proxy strips the real
+//      one down to that, and no real browser or mail app sends it bare.
+//      Email platforms (Liveclicker/Zeta, ClickDimensions, Marigold and others)
+//      document this and use it to label "Apple MPP" opens. High confidence
+//      that such a hit is Apple's proxy (or, rarely, some other bot: neither
+//      is a confirmed human read).
+//   2. Or: the request comes from Apple's own network (Apple's ASNs 714/6185,
+//      17.0.0.0/8, or Apple's IPv6 blocks) with a WebKit User-Agent that isn't
+//      a full browser (no Safari/Chrome/Firefox token), which is what Apple
+//      Mail's loader sends. Medium confidence: Apple has also used other
+//      shapes and partner networks for the proxy, and this can't see those.
+// Such hits are stored with flagged='apple' and is_bot=1: shown as "Apple
+// Mail, may be automatic", left out of the open counts, no "opened"
+// notification and no ✔✔. A click, or an open from any other client, still
+// counts as usual. Fetches inside the prefetch window stay 'prefetch'.
+const APPLE_ASNS = new Set([714, 6185]);
+const APPLE_V6 = ["2620:149:", "2a01:b740:", "2403:300:"];
+function appleNetwork(ip, asn) {
+  if (APPLE_ASNS.has(Number(asn))) return true;
+  const a = String(ip || "").toLowerCase();
+  if (/^17\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(a)) return true;
+  return APPLE_V6.some(p => a.startsWith(p));
+}
+export function isAppleProxy(ua, ip = "", asn = null) {
+  const s = String(ua || "").trim();
+  if (s === "Mozilla/5.0") return true;
+  return appleNetwork(ip, asn) && /AppleWebKit\//.test(s) && !/(Safari|Chrome|CriOS|Firefox|FxiOS|Edg)\//.test(s);
+}
+
+// ---- mail providers' image proxies ----
+// Gmail, Yahoo, Outlook.com and Apple Mail (Privacy Protection) fetch images
+// through their own servers, so the IP's city is the provider's data centre
+// ("Mountain View"), not the reader's. Decided when showing an event (from
+// its stored User-Agent), so events recorded before this was added are right too.
+export function mailProxy(ua, flagged = null) {
+  if (flagged === "apple") return "Apple Mail";
+  const s = String(ua || "").toLowerCase();
+  if (s.includes("googleimageproxy")) return "Gmail";
+  if (s.includes("yahoomailproxy") || (s.includes("yahoo") && s.includes("proxy"))) return "Yahoo";
+  if (/outlook|microsoft|hotmail|office365/.test(s) && s.includes("proxy")) return "Outlook";
+  if (String(ua || "").trim() === "Mozilla/5.0") return "Apple Mail";
+  return "";
+}
+
+// Where an event happened, as shown to the user: "via Gmail" for a proxy
+// fetch, the city for a direct open or a click. v: {kind, user_agent, geo, flagged}
+export function placeOf(v) {
+  if (v && (v.kind === "open" || v.flagged === "apple")) {
+    const p = mailProxy(v.user_agent, v.flagged);
+    if (p) return `via ${p}`;
+  }
+  return (v && v.geo) || "";
+}
 
 export function isScanner(ua) {
   const s = (ua || "").toLowerCase();
@@ -34,6 +98,7 @@ export function isScanner(ua) {
 export function classifyAgent(ua) {
   const s = (ua || "").toLowerCase();
   if (!s) return "Unknown";
+  if (s.trim() === "mozilla/5.0") return "Apple Mail";   // Apple Mail Privacy Protection's proxy
   if (s.includes("googleimageproxy")) return "Gmail";
   if (s.includes("yahoomailproxy") || s.includes("yahoo")) return "Yahoo";
   if (s.includes("outlook") || s.includes("microsoft office") || s.includes("msie")) return "Outlook";
@@ -168,6 +233,10 @@ export async function recordEvent(db, cfg, req, email, kind, linkId = null) {
     // Protection fetching on delivery, or a link scanner at delivery.
     flagged = kind === "open" ? "prefetch" : "scanner"; isBot = 1;
   }
+  if (!isBot && kind === "open" && isAppleProxy(ua, ip, (req.cf || {}).asn)) {
+    // Apple Mail Privacy Protection: may be automatic (see isAppleProxy).
+    flagged = "apple"; isBot = 1;
+  }
   if (!isBot && kind === "open") {
     const mine = await db.prepare("SELECT 1 AS x FROM self_views WHERE email_id=? AND ts>? LIMIT 1")
       .bind(eid, t - SELF_WINDOW).first();
@@ -216,8 +285,10 @@ export async function recordEvent(db, cfg, req, email, kind, linkId = null) {
       (SELECT MAX(ts)  FROM events WHERE email_id=?1 AND kind='open' AND is_bot=0 AND ts<?3) AS prev`)
     .bind(eid, t - prefs.spike_minutes * 60, t).first();
   const out = [];
+  const proxy = mailProxy(ua);
+  const where = proxy ? ` via ${proxy}` : geo ? ` from ${geo}` : "";
   out.push(c.total === 1
-    ? alertStmt(db, eid, "open", `${who} opened "${subj}"${geo ? " from " + geo : ""}`, t, email.user_id)
+    ? alertStmt(db, eid, "open", `${who} opened "${subj}"${where}`, t, email.user_id)
     : alertStmt(db, eid, "open", `${who} reopened "${subj}" (${c.total} opens)`, t, email.user_id));
   if (prefs.revival_days && c.prev && t - c.prev > prefs.revival_days * 86400) {
     out.push(alertStmt(db, eid, "revived",

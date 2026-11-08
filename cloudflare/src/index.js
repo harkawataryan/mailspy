@@ -9,7 +9,8 @@
 import { settings, now, json, html, notFound, redirect, readBody, CORS, esc } from "./util.js";
 import { sessionUser, apiUser, checkPassword, hashPassword, makeSession, sessionCookie, SESSION_MAX_AGE,
          loginBlocked, noteLoginFailure, newApiKey, newInviteCode } from "./auth.js";
-import { PIXEL_GIF, prepareEmail, recordEvent, markSelfView, markScheduled, runScheduled } from "./tracking.js";
+import { PIXEL_GIF, prepareEmail, recordEvent, markSelfView, markScheduled, runScheduled, placeOf } from "./tracking.js";
+import { hideTracking, sweepSentCopies } from "./sentcopy.js";
 import * as views from "./views.js";
 import { prefsFor, prefsFromForm } from "./prefs.js";
 import { findPerson, findRecruiters } from "./finder.js";
@@ -23,19 +24,26 @@ import { uploadDoc, deleteDoc, docBeat, createLink, deleteLink, recordLinkClick,
 
 // Everything a person has seen happen: email opens/clicks, PDF views, tracked-link clicks.
 const ACTIVITY_SQL = `SELECT * FROM (
-  SELECT v.id, v.kind, v.ts, v.geo, v.is_bot, v.flagged, e.id AS email_id, e.to_addr, e.to_name, e.subject,
+  SELECT v.id, v.kind, v.ts, v.geo, v.user_agent, v.is_bot, v.flagged, e.id AS email_id, e.to_addr, e.to_name, e.subject,
          NULL AS item_id, NULL AS title
     FROM events v JOIN emails e ON e.id=v.email_id WHERE e.user_id=?1
   UNION ALL
-  SELECT dv.id, 'doc', dv.ts, dv.geo, dv.is_self, CASE WHEN dv.is_self THEN 'self' END, e.id, e.to_addr, e.to_name, e.subject,
+  SELECT dv.id, 'doc', dv.ts, dv.geo, dv.user_agent, dv.is_self, CASE WHEN dv.is_self THEN 'self' END, e.id, e.to_addr, e.to_name, e.subject,
          d.id, d.filename
     FROM doc_views dv JOIN docs d ON d.id=dv.doc_id LEFT JOIN emails e ON e.id=dv.email_id WHERE d.user_id=?1
   UNION ALL
-  SELECT c.id, 'link', c.ts, c.geo, c.is_bot, CASE WHEN c.is_bot THEN 'scanner' END, NULL, NULL, NULL, NULL,
+  SELECT c.id, 'link', c.ts, c.geo, c.user_agent, c.is_bot, CASE WHEN c.is_bot THEN 'scanner' END, NULL, NULL, NULL, NULL,
          l.id, COALESCE(l.label, l.url)
     FROM tlink_clicks c JOIN tlinks l ON l.id=c.tlink_id WHERE l.user_id=?1
 ) ORDER BY ts DESC LIMIT ?2`;
 import manifest from "../../extension/manifest.json";
+
+// An activity row as the extension gets it: location shown as "via Gmail" for
+// proxy fetches, and no user agent.
+function shownActivity(v) {
+  const { user_agent, ...rest } = v;
+  return { ...rest, geo: placeOf(v) };
+}
 
 const EMAIL_COLS = "id,to_addr,to_name,subject,created_at,scheduled_at,user_id";
 const GOOGLE_ONLY = "!google";   // password_hash of accounts made with Google (no password yet)
@@ -358,10 +366,12 @@ async function handle(req, env, ctx) {
         await startRetry(db, out.id, plan, Number(data.scheduled_at) || null);
         out.retry = true;
       }
-      // Gmail sends a few seconds after this; then mark it ✔ in their Sent mail.
+      // Gmail sends a few seconds after this; then mark it ✔ in their Sent mail,
+      // and swap their Sent copy for one without the tracking image (sentcopy.js).
       // (Anything missed here is picked up by the scheduled sweep.)
       if (out.id && googleEnabled(cfg)) {
-        log(new Promise(r => setTimeout(r, 20000)).then(() => labelEmail(env, cfg, out.id)));
+        log(new Promise(r => setTimeout(r, 20000)).then(() => labelEmail(env, cfg, out.id))
+          .then(() => hideTracking(env, cfg, out.id, [tbase, base])));
       }
       return json(out);
     }
@@ -422,7 +432,8 @@ async function handle(req, env, ctx) {
       return st ? json(st) : json({ error: "not found" }, 404);
     }
     if (path === "/api/activity") {
-      return json((await db.prepare(ACTIVITY_SQL).bind(uid, 50).all()).results);
+      // "via Gmail" etc. instead of the mail provider's data centre (the extension shows geo as is)
+      return json((await db.prepare(ACTIVITY_SQL).bind(uid, 50).all()).results.map(shownActivity));
     }
     if (path === "/api/alerts") {
       const since = parseInt(url.searchParams.get("since") || "", 10);
@@ -443,7 +454,7 @@ async function handle(req, env, ctx) {
         db.prepare("SELECT * FROM links WHERE email_id=? ORDER BY id").bind(id),
         db.prepare("SELECT * FROM events WHERE email_id=? ORDER BY ts DESC").bind(id),
       ]);
-      return json({ email: e, links: links.results, events: events.results });
+      return json({ email: e, links: links.results, events: events.results.map(v => ({ ...v, geo: placeOf(v) })) });
     }
     return json({ error: "not found" }, 404);
   }
@@ -754,7 +765,9 @@ export default {
   async scheduled(event, env, ctx) {
     const cfg = settings(env);
     ctx.waitUntil(runScheduled(env.DB, cfg));
-    ctx.waitUntil(sweepLabels(env, cfg).catch(err => console.error("label sweep:", err)));
+    // Labels first: the Sent-copy swap needs the message the label sweep finds.
+    ctx.waitUntil(sweepLabels(env, cfg).catch(err => console.error("label sweep:", err))
+      .then(() => sweepSentCopies(env, cfg)).catch(err => console.error("sent copy sweep:", err)));
     ctx.waitUntil(sweepRetries(env, cfg).catch(err => console.error("auto-try sweep:", err)));
   },
 };
