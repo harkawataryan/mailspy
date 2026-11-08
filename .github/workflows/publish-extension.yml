@@ -19,6 +19,10 @@ on:
     branches: [main]
     paths: ["extension/**"]
   workflow_dispatch: {}
+  # Also every 6 hours: a version pushed while the previous one was still in
+  # Google's review can't be uploaded then, so it goes out on a later check.
+  schedule:
+    - cron: "17 */6 * * *"
 
 concurrency:
   group: publish-extension
@@ -85,6 +89,7 @@ jobs:
         run: node cloudflare/scripts/package-extension.mjs
 
       - name: Upload
+        id: upload
         if: steps.setup.outputs.ready == 'true' && steps.ver.outputs.new == 'true'
         env:
           TOKEN: ${{ steps.token.outputs.token }}
@@ -94,10 +99,15 @@ jobs:
             -T "dist/mailspy-extension-$VERSION.zip" \
             "https://www.googleapis.com/upload/chromewebstore/v1.1/items/$EXTENSION_ID")
           echo "$OUT"
-          if [ "$(echo "$OUT" | jq -r .uploadState)" != "SUCCESS" ]; then echo "::error::Upload failed"; exit 1; fi
+          if [ "$(echo "$OUT" | jq -r .uploadState)" = "SUCCESS" ]; then echo "uploaded=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$(echo "$OUT" | jq -r '.itemError[0].error_code // empty')" = "ITEM_NOT_UPDATABLE" ]; then
+            echo "::notice::The previous version is still in review (or waiting to publish), so $VERSION can't be uploaded yet. The 6-hourly check uploads it once that's done."
+            echo "uploaded=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "::error::Upload failed"; exit 1
 
       - name: Publish
-        if: steps.setup.outputs.ready == 'true' && steps.ver.outputs.new == 'true'
+        if: steps.setup.outputs.ready == 'true' && steps.ver.outputs.new == 'true' && steps.upload.outputs.uploaded == 'true'
         env:
           TOKEN: ${{ steps.token.outputs.token }}
         run: |
