@@ -334,9 +334,8 @@ it into the extension again. To change only the password, use
 
 ## Not in the free version
 
-The Cloudflare version tracks; it doesn't send. Sending from the dashboard,
-mail-merge campaigns and email alerts need the self-hosted Python server in
-the main folder, which needs a paid or self-run server. You send from Gmail,
-so you don't need them. Scheduled sends work through Gmail's own Schedule
-send. The dashboard's **Tracked HTML** page can still make tracked HTML to
+MailSpy tracks; it doesn't compose or send email itself. There's no sending
+from the dashboard, no mail-merge campaigns and no email alerts. You send
+from Gmail, so you don't need them. To send later, use Gmail's own Schedule
+send or MailSpy's Send later (it sends your Gmail drafts at the time you pick). The dashboard's **Tracked HTML** page can still make tracked HTML to
 paste into other mail apps.
