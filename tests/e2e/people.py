@@ -95,7 +95,9 @@ check("signed out: not found", s == 404, s)
 
 # ---- replies around the dashboard ----
 s, _, b = get("/", OWN)
-check("dashboard: Replied status and filter", 'class="st reply"' in b and 'data-f="replied"' in b and 'data-status="replied"' in b, "")
+check("dashboard: Replied status and filter", 'class="st reply"' in b and 'href="/?status=replied"' in b, "")
+s, _, b = get("/?status=replied", OWN)
+check("dashboard: Replied filter lists only replied emails", f'data-href="/email/{jane2["id"]}"' in b and f'data-href="/email/{jane1["id"]}"' not in b, "")
 s, _, b = get(f"/email/{jane2['id']}", OWN)
 check("email page: who replied and when, recipient links to their page", "Jane Doe replied" in b and 'href="/people/jane%40stripe.com"' in b and ">Replied</span>" in b, "")
 s, _, b = get("/report", OWN)
