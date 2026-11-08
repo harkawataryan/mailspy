@@ -1,0 +1,41 @@
+name = "mailspy"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# Free address: https://mailspy.<your-subdomain>.workers.dev
+workers_dev = true
+
+# Your own address (aryanh.dev is active on Cloudflare).
+# The dashboard lives on mailspy.aryanh.dev. Emails and shared links only ever
+# show go.aryanh.dev, which looks and behaves like a plain URL shortener.
+routes = [
+  { pattern = "mailspy.aryanh.dev", custom_domain = true },
+  { pattern = "go.aryanh.dev", custom_domain = true },
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mailspy"
+database_id = "4b072773-b7ef-46a4-b1b3-480f07fb33f7"
+
+# Tracked PDFs are stored here (free plan: 1 GB).
+[[kv_namespaces]]
+binding = "DOCS"
+id = "b2679b027f874d7b909f8189dacd93e2"
+
+# Follow-up reminders and cleanup run every 30 minutes.
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+LOGIN_PATH = "/emailtrack"   # where the sign-in page lives
+TRACK_URL = "https://go.aryanh.dev"   # short-link address used in emails, PDFs and shared links
+TRACK_HOME = "https://aryanh.dev"     # linked from that address's front page
+PREFETCH_WINDOW = "12"       # seconds after sending during which hits are ignored
+SPIKE_COUNT = "3"            # this many opens...
+SPIKE_WINDOW = "600"         # ...within this many seconds = "open spike" alert
+REVIVAL_DAYS = "7"           # reopened after this many quiet days = "revived" alert
+FOLLOWUP_HOURS = "48"        # unopened after this long = follow-up reminder
+IGNORE_IPS = ""              # comma-separated IPs to ignore (e.g. your own)
+EXTENSION_URL = ""           # Chrome Web Store link for the extension, once it's published
+CONTACT_EMAIL = ""           # contact address shown in the privacy policy

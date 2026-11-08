@@ -1,0 +1,13 @@
+{
+  "name": "mailspy",
+  "private": true,
+  "description": "Shortcuts so the Cloudflare commands also work from this folder.",
+  "scripts": {
+    "deploy": "npm --prefix cloudflare run deploy --",
+    "setup": "npm --prefix cloudflare run setup",
+    "set-password": "npm --prefix cloudflare run set-password",
+    "db:init": "npm --prefix cloudflare run db:init",
+    "logs": "npm --prefix cloudflare run logs",
+    "google-secrets": "npm --prefix cloudflare run google-secrets"
+  }
+}

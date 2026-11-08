@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<style>
+  :root { --bg:#ffffff; --sunk:#f6f6f4; --hover:#f4f4f2; --line:#e7e7e4; --line-2:#dcdcd8;
+          --text:#191919; --text-2:#4a4a48; --muted:#83837f; --faint:#a9a9a5;
+          --accent:#0d8a5f; --accent-soft:#e8f5ef; --blue:#2f6fde; --red:#c93a2e; --red-soft:#fdeceb;
+          --btn:#191919; --btn-text:#fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#151516; --sunk:#121213; --hover:#1b1b1d; --line:#262628; --line-2:#323235;
+            --text:#ececea; --text-2:#bdbdb9; --muted:#8a8a86; --faint:#5f5f5c;
+            --accent:#3fbf8c; --accent-soft:#11261d; --blue:#7aa7f5; --red:#f07a6f; --red-soft:#2a1412;
+            --btn:#ececea; --btn-text:#111; } }
+  * { box-sizing:border-box; }
+  body { width:360px; margin:0; background:var(--bg); color:var(--text);
+         font:13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing:antialiased; }
+  header { display:flex; align-items:center; gap:8px; padding:11px 14px; border-bottom:1px solid var(--line); }
+  .mark { width:20px; height:20px; display:block; flex:none; } .mark svg { width:100%; height:100%; display:block; }
+  header b { font-size:13.5px; font-weight:600; }
+  header .grow { flex:1; }
+  header a { color:var(--muted); text-decoration:none; font-size:12.5px; }
+  header a:hover { color:var(--text); }
+  .feed { list-style:none; margin:0; padding:2px 0; max-height:420px; overflow:auto; }
+  .feed li { display:grid; grid-template-columns:12px minmax(0,1fr) auto; gap:8px; padding:9px 14px; align-items:start; }
+  .feed li + li { border-top:1px solid var(--line); }
+  .dot { width:7px; height:7px; border-radius:50%; margin-top:6px; background:var(--accent); }
+  .dot.click { background:var(--blue); }
+  .dot.doc { background:#c27a12; }
+  .l1 b { font-weight:500; }
+  .l2 { color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tm { color:var(--faint); font-size:11.5px; white-space:nowrap; padding-top:1px; }
+  .feed li.empty { display:block; padding:28px 22px; color:var(--muted); text-align:center; line-height:1.55; }
+  .empty b { display:block; color:var(--text); font-weight:500; margin-bottom:3px; }
+  .cta { display:inline-block; margin-top:12px; background:var(--btn); color:var(--btn-text); border:0; border-radius:6px;
+          height:30px; padding:0 14px; font:inherit; font-weight:500; cursor:pointer; }
+  footer { padding:8px 14px; border-top:1px solid var(--line); color:var(--faint); font-size:12px; display:flex; justify-content:space-between; }
+  footer a { color:var(--muted); text-decoration:none; } footer a:hover { color:var(--text); }
+</style>
+</head>
+<body>
+<header>
+  <span class="mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><defs><linearGradient id="mk-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#34d399"/><stop offset=".55" stop-color="#10b981"/><stop offset="1" stop-color="#047857"/></linearGradient><linearGradient id="mk-shine" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient><radialGradient id="mk-iris" cx=".5" cy=".38" r=".7"><stop offset="0" stop-color="#065f46"/><stop offset="1" stop-color="#022c22"/></radialGradient></defs><rect width="96" height="96" rx="26" fill="url(#mk-bg)"/><rect width="96" height="96" rx="26" fill="url(#mk-shine)"/><path d="M9.5 48 C23.5 21.5 72.5 21.5 86.5 48 C72.5 74.5 23.5 74.5 9.5 48Z" fill="#fff"/><circle cx="48" cy="48" r="19.5" fill="url(#mk-iris)"/><rect x="36.5" y="40.25" width="23" height="15.75" rx="3.2" fill="#fff"/><path d="M38.3 42.4 L48 49.6 L57.7 42.4" fill="none" stroke="#064e3b" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+  <b>MailSpy</b><span class="grow"></span><a id="dash" href="#" target="_blank">Open dashboard</a>
+</header>
+<ul class="feed" id="feed"><li class="empty">Loading…</li></ul>
+<footer><span id="me"></span><a href="#" id="opts">Account</a></footer>
+<script src="config.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

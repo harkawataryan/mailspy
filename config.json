@@ -1,0 +1,23 @@
+{
+  "port": 8025,
+  "bind": "0.0.0.0",
+  "base_url": "http://localhost:8025",
+  "login_path": "/emailtrack",
+  "smtp_host": "smtp.gmail.com",
+  "smtp_port": 587,
+  "smtp_user": "",
+  "smtp_pass": "",
+  "from_name": "",
+  "from_email": "",
+  "ignore_ips": "",
+  "prefetch_window": 12,
+  "spike_count": 3,
+  "spike_window": 600,
+  "revival_days": 7,
+  "followup_hours": 48,
+  "email_alerts": "",
+  "api_key": "",
+  "geoip": false,
+  "password_hash": "",
+  "session_secret": ""
+}

@@ -1,0 +1,24 @@
+[Unit]
+Description=MailSpy email tracker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=mailspy
+Group=mailspy
+WorkingDirectory=/opt/mailspy
+Environment=MAILSPY_DATA_DIR=/opt/mailspy/data
+Environment=MAILSPY_BIND=127.0.0.1
+Environment=MAILSPY_BASE_URL=https://__DOMAIN__
+ExecStart=/usr/bin/python3 /opt/mailspy/tracker.py
+Restart=always
+RestartSec=3
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/mailspy/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,72 @@
+{
+  "manifest_version": 3,
+  "name": "MailSpy: Email Tracking for Gmail",
+  "version": "1.1.25",
+  "description": "See when your Gmail emails are opened and links are clicked. Private, invite-only email tracking.",
+  "homepage_url": "https://mailspy.aryanh.dev/privacy",
+  "permissions": [
+    "storage",
+    "notifications",
+    "alarms",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://mailspy.aryanh.dev/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "MailSpy",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://mail.google.com/*"
+      ],
+      "js": [
+        "content.js",
+        "gmail-button.js",
+        "finder-ui.js",
+        "gmail-compose.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://mailspy.aryanh.dev/extension-link*"
+      ],
+      "js": [
+        "site-link.js"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "lib/pdf.min.mjs",
+        "lib/pdf.worker.min.mjs"
+      ],
+      "matches": [
+        "https://mail.google.com/*"
+      ]
+    }
+  ]
+}

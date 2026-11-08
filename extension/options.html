@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>MailSpy</title>
+<meta name="color-scheme" content="light dark">
+<style>
+  :root { --bg:#ffffff; --sunk:#f6f6f4; --hover:#f4f4f2; --line:#e7e7e4; --line-2:#dcdcd8;
+          --text:#191919; --text-2:#4a4a48; --muted:#83837f; --faint:#a9a9a5;
+          --accent:#0d8a5f; --accent-soft:#e8f5ef; --blue:#2f6fde; --red:#c93a2e; --red-soft:#fdeceb;
+          --btn:#191919; --btn-text:#fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#151516; --sunk:#121213; --hover:#1b1b1d; --line:#262628; --line-2:#323235;
+            --text:#ececea; --text-2:#bdbdb9; --muted:#8a8a86; --faint:#5f5f5c;
+            --accent:#3fbf8c; --accent-soft:#11261d; --blue:#7aa7f5; --red:#f07a6f; --red-soft:#2a1412;
+            --btn:#ececea; --btn-text:#111; } }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--sunk); color:var(--text);
+         font:14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing:antialiased; padding:24px; }
+  .box { width:100%; max-width:360px; }
+  .brand { display:flex; align-items:center; justify-content:center; gap:9px; font-weight:600; font-size:15px; margin-bottom:26px; }
+  .mark { width:28px; height:28px; display:block; } .mark svg { width:100%; height:100%; display:block; }
+  h1 { font-size:18px; font-weight:600; text-align:center; margin:0; letter-spacing:-.2px; }
+  .lead { color:var(--muted); text-align:center; font-size:13.5px; margin:6px 0 20px; }
+  .card { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:22px; }
+  label { display:block; color:var(--text-2); font-size:12.5px; font-weight:500; margin:14px 0 6px; }
+  label:first-child { margin-top:0; }
+  input { width:100%; height:34px; padding:0 10px; border:1px solid var(--line-2); border-radius:6px; font:inherit; font-size:13.5px;
+          background:var(--bg); color:var(--text); }
+  input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+  button { width:100%; height:36px; margin-top:18px; background:var(--btn); color:var(--btn-text); border:1px solid var(--btn);
+           border-radius:6px; font:inherit; font-size:13.5px; font-weight:500; cursor:pointer; }
+  button:hover { opacity:.88; }
+  button.ghost { background:var(--bg); color:var(--text); border-color:var(--line-2); margin-top:8px; }
+  button.ghost:hover { background:var(--hover); opacity:1; }
+  button:disabled { opacity:.6; cursor:default; }
+  .err { background:var(--red-soft); color:var(--red); border-radius:6px; padding:9px 12px; margin-top:14px; font-size:13px; display:none; }
+  .who { border:1px solid var(--line); border-radius:6px; padding:10px 12px; }
+  .who b { font-weight:500; display:block; }
+  .who span { color:var(--muted); font-size:13px; }
+  #initials { display:none; }
+  .ok { color:var(--accent); font-size:13px; margin-top:12px; }
+  .foot { text-align:center; font-size:12px; margin-top:16px; }
+  .foot a { color:var(--muted); }
+  [hidden] { display:none !important; }
+  .google { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; background:#fff !important; color:#1f1f1f !important;
+            border:1px solid #dadce0 !important; font-weight:500; }
+  .google:hover { background:#f8f9fa !important; }
+  .or { display:flex; align-items:center; gap:12px; margin:16px 0 0; color:#9aa0a6; font-size:12px; }
+  .or::before, .or::after { content:""; flex:1; height:1px; background:#e8eaed; }
+  #googleBox + #form { margin-top:-1px; }
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="brand"><span class="mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><defs><linearGradient id="mk-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#34d399"/><stop offset=".55" stop-color="#10b981"/><stop offset="1" stop-color="#047857"/></linearGradient><linearGradient id="mk-shine" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient><radialGradient id="mk-iris" cx=".5" cy=".38" r=".7"><stop offset="0" stop-color="#065f46"/><stop offset="1" stop-color="#022c22"/></radialGradient></defs><rect width="96" height="96" rx="26" fill="url(#mk-bg)"/><rect width="96" height="96" rx="26" fill="url(#mk-shine)"/><path d="M9.5 48 C23.5 21.5 72.5 21.5 86.5 48 C72.5 74.5 23.5 74.5 9.5 48Z" fill="#fff"/><circle cx="48" cy="48" r="19.5" fill="url(#mk-iris)"/><rect x="36.5" y="40.25" width="23" height="15.75" rx="3.2" fill="#fff"/><path d="M38.3 42.4 L48 49.6 L57.7 42.4" fill="none" stroke="#064e3b" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>MailSpy</div>
+
+  <div id="signedOut" hidden>
+    <h1>Sign in</h1>
+    <p class="lead">Use the account from your MailSpy invite.</p>
+    <div class="card" id="googleBox" hidden>
+      <button id="google" type="button" class="google"><svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg><span>Continue with Google</span></button>
+      <div class="or"><span>or use your password</span></div>
+    </div>
+    <form id="form" class="card">
+      <label>Email</label><input id="email" type="email" required autocomplete="email">
+      <label>Password</label><input id="password" type="password" required autocomplete="current-password">
+      <button id="go" type="submit">Sign in</button>
+      <div class="err" id="err"></div>
+    </form>
+  </div>
+
+  <div id="signedIn" hidden>
+    <h1>You're signed in</h1>
+    <p class="lead">Emails you send from Gmail are now tracked.</p>
+    <div class="card">
+      <div class="who"><span id="initials"></span><b id="name"></b><span id="mail"></span></div>
+      <div class="ok" id="justNow" hidden>Reload any open Gmail tabs to start tracking.</div>
+      <button id="dash" type="button">Open dashboard</button>
+      <button id="out" class="ghost" type="button">Sign out</button>
+    </div>
+  </div>
+
+  <div class="foot"><a id="privacy" href="#" target="_blank">Privacy policy</a></div>
+</div>
+<script src="config.js"></script>
+<script src="options.js"></script>
+</body>
+</html>
