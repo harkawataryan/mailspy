@@ -3,6 +3,7 @@
 //     PDFs are sent as attachment-style tiles that report opens (convertPdfs,
 //     called by content.js on Send),
 //   * a Templates button next to Send,
+//   * a Draft button next to it that writes or polishes the email with AI,
 //   * a Find link next to Cc / Bcc,
 //   * a "Track clicks" switch on links.
 //
@@ -355,7 +356,7 @@
   function scan() {
     if (!alive()) return;
     document.querySelectorAll('[role=button][data-tooltip^="Send"], [role=button][aria-label^="Send"]').forEach(function (b) {
-      if (/^Send\b/i.test(b.getAttribute("data-tooltip") || b.getAttribute("aria-label") || "")) addTemplatesButton(b);
+      if (/^Send\b/i.test(b.getAttribute("data-tooltip") || b.getAttribute("aria-label") || "")) { addDraftButton(b); addTemplatesButton(b); }
     });
   }
 
@@ -692,6 +693,217 @@
     }
 
     listView();
+  }
+
+  // ------------------------------------------------------------ AI drafter
+  // A "Draft" button next to Send. Say what the email is for (or let it polish
+  // what you wrote); Claude writes it with your own API key (set in MailSpy
+  // Settings, used only on MailSpy's server), you check it, then Insert.
+  var AI_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>';
+  var AI_CSS = TPL_CSS + `
+    textarea { width: 100%; box-sizing: border-box; border: 1px solid #c4c7c5; border-radius: 8px; padding: 8px 9px; resize: vertical;
+               font: 13px/1.45 "Google Sans", Roboto, Arial, sans-serif; color: #1f1f1f; outline: none; background: #fff; }
+    textarea:focus { border-color: #0b57d0; box-shadow: 0 0 0 1px #0b57d0; }
+    .goal { min-height: 64px; }
+    .out { min-height: 210px; }
+    .note { font-size: 12px; color: #5f6368; }
+    .note a { color: #0b57d0; text-decoration: none; }
+    .acts { display: flex; gap: 8px; }
+    .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid #c2e7ff; border-top-color: #0b57d0; border-radius: 50%;
+            animation: r .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+    @keyframes r { to { transform: rotate(360deg); } }
+  `;
+  var aiHost = null, aiRoot = null;
+  var aiMemory = new WeakMap();   // compose -> { goal, tone, mode, result } so Back / reopening keeps your words
+
+  function addDraftButton(sendBtn) {
+    var root = composeRoot(sendBtn);
+    if (!root || !findBody(root) || root.querySelector(".mailspy-ai-host")) return;
+    var sr = sendRowHost(sendBtn, "mailspy-ai-host").attachShadow({ mode: "open" });
+    sr.innerHTML = "<style>" + CSS + '</style><button type="button" title="Write or polish this email with AI (MailSpy)">' + AI_ICON + "<span>Draft</span></button>";
+    var b = sr.querySelector("button");
+    b.addEventListener("click", function (e) {
+      e.preventDefault(); e.stopPropagation();
+      if (aiHost && aiRoot === root) closeDrafter(); else openDrafter(b, root);
+    });
+  }
+
+  function closeDrafter() {
+    if (aiHost) aiHost.remove();
+    aiHost = null; aiRoot = null;
+    document.removeEventListener("mousedown", outsideAi, true);
+    document.removeEventListener("keydown", escAi, true);
+  }
+  function outsideAi(e) { if (aiHost && !e.composedPath().includes(aiHost)) closeDrafter(); }
+  function escAi(e) { if (e.key === "Escape" && aiHost) { e.stopPropagation(); closeDrafter(); } }
+
+  // Text of some email HTML, keeping line and paragraph breaks
+  function textOf(html) {
+    var d = document.createElement("div");
+    d.innerHTML = String(html || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h\d|blockquote)>/gi, "\n");
+    return (d.textContent || "").replace(/ /g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
+  // Plain-text draft -> Gmail-style HTML: one <div> per line, an empty line between paragraphs
+  function draftHtml(text) {
+    return String(text || "").trim().split(/\n\s*\n/).map(function (p) {
+      return p.split("\n").map(function (l) { return "<div>" + (esc(l) || "<br>") + "</div>"; }).join("");
+    }).join("<div><br></div>");
+  }
+  // Remove what's been written, keeping the signature and any quoted reply
+  function clearWritten(root) {
+    var body = findBody(root);
+    var stop = body.querySelector(".gmail_signature, [data-smartmail='gmail_signature'], .gmail_quote");
+    while (stop && stop.parentElement && stop.parentElement !== body) stop = stop.parentElement;
+    while (body.firstChild && body.firstChild !== stop) body.removeChild(body.firstChild);
+  }
+  // The message this is a reply to, if any: the quoted text, or the last message shown in the thread
+  function replyContext(root) {
+    var body = findBody(root);
+    var q = body && body.querySelector(".gmail_quote");
+    if (q && textOf(q.innerHTML)) return textOf(q.innerHTML).slice(0, 4000);
+    var subj = root.querySelector('input[name="subjectbox"]');
+    var isReply = (subj && /^(re|aw|sv):/i.test(subj.value)) || !subj;
+    if (!isReply) return "";
+    var shown = [].slice.call(document.querySelectorAll(".a3s")).filter(function (n) { return !root.contains(n) && n.offsetParent; });
+    return shown.length ? textOf(shown[shown.length - 1].innerHTML).slice(0, 4000) : "";
+  }
+
+  function openDrafter(btn, root) {
+    closeDrafter();
+    closeTemplates();
+    aiRoot = root;
+    aiHost = document.createElement("div");
+    aiHost.className = "mailspy-ai-pop";
+    var sr = aiHost.attachShadow({ mode: "open" });
+    sr.innerHTML = "<style>" + AI_CSS + '</style><div class="pop" role="dialog" aria-label="Draft with AI" style="width:440px;max-height:560px"></div>';
+    var pop = sr.querySelector(".pop");
+    ["keydown", "keypress", "keyup"].forEach(function (t) {
+      pop.addEventListener(t, function (e) { if (e.key !== "Escape") e.stopPropagation(); });
+    });
+    document.body.appendChild(aiHost);
+    var r = btn.getBoundingClientRect();
+    aiHost.style.left = Math.round(Math.min(Math.max(8, r.left), window.innerWidth - 448)) + "px";
+    aiHost.style.bottom = Math.round(Math.max(8, window.innerHeight - r.top + 8)) + "px";
+    setTimeout(function () {
+      document.addEventListener("mousedown", outsideAi, true);
+      document.addEventListener("keydown", escAi, true);
+    }, 0);
+
+    var who = recipientOf(root);
+    var mem = aiMemory.get(root) || {};
+    aiMemory.set(root, mem);
+    var written = currentEmail(root, null);
+    var hasText = !!textOf(written.body);
+    var mode = mem.mode || (hasText ? "improve" : "new");
+    if (!hasText) mode = "new";
+    var tone = mem.tone || "direct";
+    var ctxText = who ? "To " + (who.full || who.email) + (who.domain ? " · " + who.domain : "") : "Add a recipient for a more personal draft";
+
+    function seg(cls, items, on) {
+      return '<div class="seg ' + cls + '">' + items.map(function (x) {
+        return '<button type="button" data-v="' + x[0] + '"' + (x[0] === on ? ' class="on"' : "") + ">" + esc(x[1]) + "</button>";
+      }).join("") + "</div>";
+    }
+
+    function formView(errText) {
+      pop.innerHTML = '<div class="top"><div class="ttl" style="margin:0"><b>Draft with AI</b><span class="ctx">' + esc(ctxText) + "</span></div></div>" +
+        '<div class="body"><div class="form">' +
+        (hasText ? "<div>" + seg("md", [["improve", "Polish what I wrote"], ["new", "Write a new one"]], mode) + "</div>" : "") +
+        '<div><div class="lbl">' + (mode === "improve" ? "Anything to change? (optional)" : "What's it for?") + "</div>" +
+        '<textarea class="goal" maxlength="1500" placeholder="' + (mode === "improve"
+          ? "e.g. shorter, friendlier, mention I can start in June"
+          : "e.g. ask about new-grad backend roles on the payments team; mention my Go internship") + '"></textarea></div>' +
+        "<div><div class=\"lbl\">Tone</div>" + seg("tn", [["direct", "Short & direct"], ["warm", "Warm"], ["formal", "Formal"]], tone) + "</div>" +
+        '<div class="err"></div></div></div>' +
+        '<div class="foot"><a target="_blank" rel="noreferrer" href="' + SERVER + '/settings#ai_about">What it knows about you ↗</a>' +
+        '<button class="btn pri go" type="button">Draft</button></div>';
+      var goal = pop.querySelector(".goal"), go = pop.querySelector(".go");
+      goal.value = mem.goal || "";
+      if (errText) pop.querySelector(".err").innerHTML = errText;
+      goal.focus();
+      goal.addEventListener("input", function () { mem.goal = goal.value; });
+      goal.addEventListener("keydown", function (e) { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go.click(); } });
+      pop.querySelectorAll(".md button").forEach(function (b) {
+        b.addEventListener("click", function () { mode = mem.mode = b.getAttribute("data-v"); formView(); });
+      });
+      pop.querySelectorAll(".tn button").forEach(function (b) {
+        b.addEventListener("click", function () {
+          tone = mem.tone = b.getAttribute("data-v");
+          pop.querySelectorAll(".tn button").forEach(function (x) { x.classList.toggle("on", x === b); });
+        });
+      });
+      go.addEventListener("click", function () { run(go); });
+    }
+
+    async function run(go) {
+      var cur = currentEmail(root, null);
+      var body = findBody(root);
+      var payload = {
+        mode: mode, tone: tone, goal: (mem.goal || "").trim(),
+        to_email: who ? who.email : "", to_name: who ? who.full : "",
+        subject: cur.subject, draft: mode === "improve" ? textOf(cur.body) : "",
+        thread: replyContext(root),
+        has_signature: !!(body && body.querySelector(".gmail_signature, [data-smartmail='gmail_signature']")),
+      };
+      if (mode === "new" && !payload.goal && !payload.thread) {
+        pop.querySelector(".err").textContent = "Say what the email is for.";
+        pop.querySelector(".goal").focus();
+        return;
+      }
+      go.disabled = true;
+      go.innerHTML = '<span class="spin"></span>Writing…';
+      var s = await chrome.storage.local.get(["apiKey"]);
+      if (!s.apiKey) { formView("Sign in to MailSpy first (click its icon in Chrome's toolbar)."); return; }
+      var d;
+      try {
+        var res = await fetch(SERVER + "/api/draft", { method: "POST",
+          headers: { "Content-Type": "application/json", "X-API-Key": s.apiKey }, body: JSON.stringify(payload) });
+        d = await res.json().catch(function () { return { error: "Drafting failed. Try again." }; });
+      } catch (e) { d = { error: "Couldn't reach MailSpy. Check your connection." }; }
+      if (!aiHost) return;
+      if (d.error) {
+        formView(esc(d.error) + (d.needsKey ? ' <a target="_blank" rel="noreferrer" href="' + SERVER + '/settings#claude_key">Open Settings ↗</a>' : ""));
+        return;
+      }
+      mem.result = d;
+      resultView(d);
+    }
+
+    function resultView(d) {
+      var meta = [d.role, d.company].filter(Boolean).join(" at ");
+      pop.innerHTML = '<div class="top"><div class="ttl" style="margin:0"><b>Draft</b><span class="ctx">' + esc(meta ? "Knows: " + meta : ctxText) + "</span></div></div>" +
+        '<div class="body"><div class="form">' +
+        '<div><div class="lbl">Subject</div><input type="text" class="sj" maxlength="300"></div>' +
+        '<div><div class="lbl">Email (edit it here or after inserting)</div><textarea class="out"></textarea></div>' +
+        (d.cut ? '<div class="err">This draft was cut off. Try again, or ask for a shorter one.</div>' : "") +
+        '<div class="note">Read it before you send: check every fact is right.</div></div></div>' +
+        '<div class="foot"><div class="acts"><button class="btn back" type="button">Back</button><button class="btn again" type="button">Try again</button></div>' +
+        '<button class="btn pri ins" type="button">' + (hasText ? "Replace my email" : "Insert") + "</button></div>";
+      var sj = pop.querySelector(".sj"), out = pop.querySelector(".out");
+      sj.value = d.subject || "";
+      out.value = d.body || "";
+      pop.querySelector(".back").addEventListener("click", function () { formView(); });
+      pop.querySelector(".again").addEventListener("click", function (e) { formView(); run(pop.querySelector(".go")); });
+      pop.querySelector(".ins").addEventListener("click", function () {
+        var subj = root.querySelector('input[name="subjectbox"]');
+        var newSubj = sj.value.trim();
+        if (subj && newSubj && (!subj.value.trim() || mode === "improve" || !hasText)) {
+          if (!/^(re|fwd?):/i.test(subj.value.trim())) {        // keep "Re:" subjects as Gmail set them
+            subj.value = newSubj;
+            subj.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+        }
+        if (textOf(currentEmail(root, null).body)) clearWritten(root);
+        insertTemplate(root, { subject: "", body: draftHtml(out.value) }, {}, null);
+        aiMemory.delete(root);
+        closeDrafter();
+        var b = findBody(root);
+        if (b) b.focus();
+      });
+    }
+
+    if (mem.result) resultView(mem.result); else formView();
   }
 
   // ------------------------------------------------------------ find an email
@@ -1233,7 +1445,7 @@
   var timer = setInterval(function () {
     if (!alive()) {
       clearInterval(timer);
-      document.querySelectorAll(".mailspy-pdf-host, .mailspy-tpl-host, .mailspy-tpl-pop, .mailspy-link-pill, .mailspy-chip-host, .mailspy-find-host, .mailspy-find-pop, .mailspy-find-hint, .mailspy-finder, .mailspy-try-host, style.mailspy-link-style").forEach(function (n) { n.remove(); });
+      document.querySelectorAll(".mailspy-pdf-host, .mailspy-tpl-host, .mailspy-tpl-pop, .mailspy-ai-host, .mailspy-ai-pop, .mailspy-link-pill, .mailspy-chip-host, .mailspy-find-host, .mailspy-find-pop, .mailspy-find-hint, .mailspy-finder, .mailspy-try-host, style.mailspy-link-style").forEach(function (n) { n.remove(); });
       return;
     }
     scan();

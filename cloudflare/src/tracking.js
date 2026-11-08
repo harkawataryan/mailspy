@@ -28,7 +28,7 @@ const SCANNER_HINTS = [
 // Your own views on other devices (the Gmail phone app) never reach the
 // pixel at all once the tracking is taken out of your Sent copy (sentcopy.js).
 const SELF_WINDOW = 20;   // seconds after a self-view during which opens are yours
-const SELF_LOOKBACK = 10; // seconds before a self-view to re-flag as yours
+const SELF_LOOKBACK = 12; // seconds before a self-view to re-flag as yours (less than ALERT_SETTLE)
 
 // ---- Apple Mail Privacy Protection ----
 // With Mail Privacy Protection on (the default for most Apple Mail users),
@@ -89,6 +89,15 @@ export function placeOf(v) {
     if (p) return `via ${p}`;
   }
   return (v && v.geo) || "";
+}
+
+// The image was loaded by a Gmail web page directly (Referer mail.google.com),
+// not through Google's image proxy. Gmail proxies every image in mail you
+// receive, so this is the sender's own browser: their compose window or draft.
+export function fromOwnGmail(req) {
+  const ref = String((req.headers && req.headers.get && req.headers.get("Referer")) || "");
+  const ua = String((req.headers && req.headers.get && req.headers.get("User-Agent")) || "").toLowerCase();
+  return /^https:\/\/mail\.google\.com(\/|$)/i.test(ref) && !ua.includes("googleimageproxy");
 }
 
 export function isScanner(ua) {
@@ -234,6 +243,12 @@ export async function recordEvent(db, cfg, req, email, kind, linkId = null) {
     // Protection fetching on delivery, or a link scanner at delivery.
     flagged = kind === "open" ? "prefetch" : "scanner"; isBot = 1;
   }
+  if (!isBot && kind === "open" && fromOwnGmail(req)) {
+    // Your own Gmail page loading the image straight from us: the compose
+    // window (it re-renders while you schedule or edit), or a draft. A
+    // recipient reading in Gmail always comes through GoogleImageProxy instead.
+    flagged = "self"; isBot = 1;
+  }
   if (!isBot && kind === "open" && isAppleProxy(ua, ip, (req.cf || {}).asn)) {
     // Apple Mail Privacy Protection: may be automatic (see isAppleProxy).
     flagged = "apple"; isBot = 1;
@@ -302,6 +317,22 @@ export async function recordEvent(db, cfg, req, email, kind, linkId = null) {
   await db.batch(out);
 }
 
+// New alerts are held back for a few seconds before the extension and the
+// live page see them. An open can arrive a moment before the extension reports
+// that it was you (your Gmail loading a draft through Google's image proxy);
+// markSelfView then deletes the alert, and holding it back means it never pops
+// up. Only the oldest run of settled alerts is returned, so the "since" cursor
+// never skips past one that's still settling. rows: ordered by id.
+export const ALERT_SETTLE = 15;
+export function settledAlerts(rows, t = now()) {
+  const out = [];
+  for (const a of rows) {
+    if (Number(a.ts) > t - ALERT_SETTLE) break;
+    out.push(a);
+  }
+  return out;
+}
+
 // The extension calls this when YOU view a tracked message in Gmail.
 export async function markSelfView(db, userId, token) {
   const e = await db.prepare("SELECT id FROM emails WHERE token=? AND user_id=?").bind(token, userId).first();
@@ -324,7 +355,14 @@ export async function markScheduled(db, userId, token, at) {
   const e = await db.prepare("SELECT id FROM emails WHERE token=? AND user_id=?").bind(token, userId).first();
   if (!e) return false;
   const value = at && Number(at) > 0 ? Number(at) : -1;
-  await db.prepare("UPDATE emails SET scheduled_at=? WHERE id=?").bind(value, e.id).run();
+  // It hasn't been sent yet, so any open or click so far was you (the compose
+  // window loading the image while you picked a time): not counted, no alert.
+  await db.batch([
+    db.prepare("UPDATE emails SET scheduled_at=? WHERE id=?").bind(value, e.id),
+    db.prepare("UPDATE events SET is_bot=1, flagged='self' WHERE email_id=? AND kind IN ('open','click') AND is_bot=0").bind(e.id),
+    db.prepare("DELETE FROM alerts WHERE email_id=? AND kind IN ('open','click','spike','revived')").bind(e.id),
+    ...recount(db, e.id),
+  ]);
   return true;
 }
 

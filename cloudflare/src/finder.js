@@ -625,6 +625,15 @@ export function liMerge(old, found, now) {
   return [...by.values()].sort((a, b) => rec(b) - rec(a) || b.seen - a.seen).slice(0, LI_MAX);
 }
 
+// Someone's job title, if the shared index has them (used by the AI drafter)
+export async function liRole(env, domain, name) {
+  if (!env.DOCS || !domain || !name || !splitName(name)) return "";
+  const idx = await env.DOCS.get(`find:li:v2:${String(domain).toLowerCase()}`, { type: "json" }).catch(() => null);
+  const k = keyOf(name);
+  const p = idx && (idx.people || []).find(x => keyOf(x.name) === k);
+  return p ? p.position || "" : "";
+}
+
 // mode: "auto" (index when it's good, otherwise search), "both", or "fresh"
 export async function linkedinPeople(env, key, org, domain, mode = "auto") {
   if (!org || !domain) return { list: [] };

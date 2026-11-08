@@ -822,6 +822,51 @@ export function settingsPage({ cfg, base, user, prefs, ip = "", notice = "", gma
         <a class="link" href="https://serpapi.com/users/sign_up" target="_blank" rel="noreferrer">SerpApi</a>. Good results go into an index shared by everyone on MailSpy, so a company that's already been searched well costs no credits for 90 days.</div>
     </div></div>
 
+  <div class="sect"><div><h3>AI drafter</h3><p class="d">Writes or polishes emails right in Gmail compose (the ✦ Draft button next to Send), using Claude with your own API key.</p></div>
+    <div class="body">
+      <label for="claude_key">Claude API key</label>
+      <input type="password" id="claude_key" name="claude_key" autocomplete="off" spellcheck="false"
+        placeholder="${prefs.claude_key ? `Saved (ends in ${esc(prefs.claude_key_hint || "····")}). Paste a new key to replace it.` : "Paste a key that starts with sk-ant-"}" value="">
+      <div class="hint">Create one in the <a class="link" href="https://platform.claude.com/settings/keys" target="_blank" rel="noreferrer">Claude Console</a>. It's stored encrypted and only used from MailSpy's server; the Chrome extension never sees it. Each draft is billed to your key (typically about a cent with Claude Opus 5.5).${prefs.claude_key ? ` <a class="link" href="#" onclick="if(confirm('Remove your saved Claude API key?')){var f=document.createElement('form');f.method='post';f.action='/settings';f.innerHTML='<input type=hidden name=action value=claude_key_remove>';document.body.appendChild(f);f.submit()}return false">Remove key</a>` : ""}</div>
+      <label for="ai_about" style="margin-top:16px">About you, for the drafter</label>
+      <textarea id="ai_about" name="ai_about" maxlength="2000" rows="5" placeholder="e.g. Final-year CS student. Interned on a backend team (Go, Postgres). Looking for new-grad backend roles. Portfolio: yoursite.com">${esc(prefs.ai_about || "")}</textarea>
+      <div class="hint">The facts Claude can use about you: background, what you're looking for, links. It never makes up anything beyond this.</div>
+
+      <label id="ai_learn" style="margin-top:20px">Learn from my Gmail</label>
+      <div class="hint" style="margin-top:0">Reads your scheduled emails, the emails you tracked (and which got replies), recent sent emails that look like recruiting outreach, and the newest resume you've attached in Gmail, then saves a short profile: facts about you, how you write, and up to 3 of your emails to imitate. The emails and resume themselves aren't kept. Billed to your Claude key, usually a few cents.</div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px">
+        <button class="btn sm${prefs.ai_learned ? "" : " primary"}" type="button" id="learnBtn"${prefs.claude_key ? "" : " disabled title=\"Add your Claude API key first\""}>${prefs.ai_learned ? "Learn again" : "Learn from my Gmail"}</button>
+        <label class="hint" style="margin:0;display:inline-flex;gap:6px;align-items:center;cursor:pointer">Use this resume instead: <input type="file" id="learnResume" form="learnNoForm" accept="application/pdf,.pdf" style="font-size:12px;max-width:220px"></label>
+      </div>
+      <div class="hint" id="learnStatus" role="status" aria-live="polite">${prefs.ai_learned ? `Learned ${esc(new Date(prefs.ai_learned.at * 1000).toISOString().slice(0, 10))} from ${prefs.ai_learned.emails} of your emails${prefs.ai_learned.resume ? ` and ${esc(prefs.ai_learned.resume)}` : ""}. <a class="link" href="#" onclick="if(confirm('Forget what the drafter learned from your Gmail?')){var f=document.createElement('form');f.method='post';f.action='/settings';f.innerHTML='<input type=hidden name=action value=ai_forget>';document.body.appendChild(f);f.submit()}return false">Forget it</a>` : ""}</div>
+      ${prefs.ai_learned ? `
+      <label for="ai_resume" style="margin-top:14px">From your resume and emails</label>
+      <textarea id="ai_resume" name="ai_resume" maxlength="2500" rows="7">${esc(prefs.ai_resume || "")}</textarea>
+      <label for="ai_style" style="margin-top:12px">How you write</label>
+      <textarea id="ai_style" name="ai_style" maxlength="2000" rows="6">${esc(prefs.ai_style || "")}</textarea>
+      <div class="hint">Edit either box if something's wrong; your edits are what the drafter uses.</div>
+      ${(prefs.ai_examples || []).length ? `<details style="margin-top:8px"><summary class="hint" style="cursor:pointer;margin:0">Your emails it imitates (${prefs.ai_examples.length})</summary>
+        ${prefs.ai_examples.map(e => `<div class="hint" style="white-space:pre-wrap;border-left:2px solid var(--line);padding:4px 10px;margin:8px 0"><b>${esc(e.subject || "(no subject)")}</b>${e.status ? ` · ${esc(e.status)}` : ""}\n${esc(e.body)}</div>`).join("")}</details>` : ""}` : ""}
+      <script>
+      (function () {
+        var b = document.getElementById("learnBtn"), st = document.getElementById("learnStatus"), file = document.getElementById("learnResume");
+        if (!b) return;
+        b.addEventListener("click", async function () {
+          b.disabled = true; var label = b.textContent; b.textContent = "Reading your emails…";
+          st.textContent = "This takes up to a minute.";
+          var fd = new FormData();
+          if (file.files[0]) fd.append("resume", file.files[0]);
+          try {
+            var r = await fetch("/settings/ai-learn", { method: "POST", credentials: "same-origin", body: fd });
+            var d = await r.json().catch(function () { return { error: "Something went wrong. Try again." }; });
+            if (d.error) { st.textContent = d.error; b.disabled = false; b.textContent = label; return; }
+            location.hash = "ai_learn"; location.reload();
+          } catch (e) { st.textContent = "Couldn't reach MailSpy. Check your connection."; b.disabled = false; b.textContent = label; }
+        });
+      })();
+      </script>
+    </div></div>
+
   <noscript><div class="savebar"><button class="btn primary" type="submit">Save settings</button></div></noscript>
   </form>
   <div class="autosave" id="autosave" role="status" aria-live="polite"></div>
@@ -1328,7 +1373,7 @@ export function privacyPage(cfg, base) {
   <p>When a MailSpy user sends an email from Gmail with the MailSpy Chrome extension, the extension adds a tiny invisible image to the message and routes its links through ${esc(base)}. When the recipient's mail app loads that image or a link is clicked, MailSpy records it so the sender can see that the email was opened.</p>
 
   <h2>Signing in with Google and Gmail access</h2>
-  <p>MailSpy users can sign in with Google. MailSpy then receives their name, email address and Google account ID, and, if they allow it, permission to manage labels in their Gmail (the <code>gmail.modify</code> permission). MailSpy uses that permission only to find the emails the user tracked in their own Sent mail, by recipient, date and subject, and to add or remove two labels on them: ✔ (sent) and ✔✔ (opened). If the user turns on <b>auto-try</b> for an email (sending to several possible addresses for one person, one at a time), MailSpy also looks for delivery-failure notices about that email, re-sends the user's own email to the next address the user chose when one bounces, and moves the failed copy and its failure notice to Trash. To show the user when someone replied, MailSpy looks at the Gmail conversation of each email the user tracked in the last 30 days and reads only the From and Date headers of its messages (and Gmail's marker for which of them the user sent), never their subject, body or attachments; it stores only when the reply arrived and the replier's name and address. Unless the user turns it off (Settings → Gmail checkmarks → <b>Hide tracking from my own Sent copy</b>), MailSpy also replaces the user's own Sent copy of each tracked email with an identical copy without the tracking image, so the user reading their own sent email (for example in the Gmail phone app) isn't counted as the recipient opening it. To do that it reads that one message in full (including attachments, in memory only, just long enough to make the copy), adds the copy to the same conversation with the same labels and date (nothing is sent to anyone), and moves the original to Trash, where Gmail deletes it after 30 days. It does not otherwise read, store or share the content of any email, and does not send, delete or change anything else. The access token is stored encrypted and can be removed any time under Settings → Gmail checkmarks → Disconnect, or in the Google account's security settings.</p>
+  <p>MailSpy users can sign in with Google. MailSpy then receives their name, email address and Google account ID, and, if they allow it, permission to manage labels in their Gmail (the <code>gmail.modify</code> permission). MailSpy uses that permission only to find the emails the user tracked in their own Sent mail, by recipient, date and subject, and to add or remove two labels on them: ✔ (sent) and ✔✔ (opened). If the user turns on <b>auto-try</b> for an email (sending to several possible addresses for one person, one at a time), MailSpy also looks for delivery-failure notices about that email, re-sends the user's own email to the next address the user chose when one bounces, and moves the failed copy and its failure notice to Trash. To show the user when someone replied, MailSpy looks at the Gmail conversation of each email the user tracked in the last 30 days and reads only the From and Date headers of its messages (and Gmail's marker for which of them the user sent), never their subject, body or attachments; it stores only when the reply arrived and the replier's name and address. Unless the user turns it off (Settings → Gmail checkmarks → <b>Hide tracking from my own Sent copy</b>), MailSpy also replaces the user's own Sent copy of each tracked email with an identical copy without the tracking image, so the user reading their own sent email (for example in the Gmail phone app) isn't counted as the recipient opening it. To do that it reads that one message in full (including attachments, in memory only, just long enough to make the copy), adds the copy to the same conversation with the same labels and date (nothing is sent to anyone), and moves the original to Trash, where Gmail deletes it after 30 days. If the user presses <b>Learn from my Gmail</b> (Settings → AI drafter), MailSpy reads, once, the user's own scheduled emails, the sent emails they tracked, up to about 20 recent sent emails that look like job or networking outreach, and the newest PDF resume they attached to a sent email; it sends those (with recipients reduced to name and company domain) to Anthropic's Claude API under the user's own API key, stores only the resulting short profile (facts about the user, notes on their writing style, and up to 3 of their own emails as examples, all visible and editable in Settings and removable with <b>Forget it</b>), and does not keep the emails or resume. It does not otherwise read, store or share the content of any email, and does not send, delete or change anything else. The access token is stored encrypted and can be removed any time under Settings → Gmail checkmarks → Disconnect, or in the Google account's security settings.</p>
   <p>MailSpy's use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
 
   <h2>Data about MailSpy users</h2>
@@ -1336,6 +1381,7 @@ export function privacyPage(cfg, base) {
     <li>Your account: email address, optional name, and a hashed password (never the password itself).</li>
     <li>For each tracked email: the recipient's address and name as you entered them, the subject line, the links it contained, when it was sent or scheduled, and, with Gmail connected, when a reply arrived and who sent it.</li>
     <li>The extension reads the recipient, subject and body of an email only at the moment you click Send or Schedule send, to add tracking. It does not read your inbox, and it does not store email bodies.</li>
+    <li>AI drafter (optional, only with your own Claude API key): when you press Draft, MailSpy sends what you typed about the email, the recipient's name, address, company and job title (if MailSpy knows it), what you wrote about yourself in Settings, your draft (if you ask to polish it) the message you're replying to, and your saved drafter profile (if you made one with Learn from my Gmail), to Anthropic's Claude API under your key, and passes the result back to you. MailSpy doesn't keep any of it. Your key is stored encrypted and never reaches the extension. Anthropic handles that data under its own terms for API customers.</li>
   </ul>
 
   <h2>Tracked documents and links</h2>

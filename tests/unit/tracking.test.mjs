@@ -92,6 +92,47 @@ const c = mk("Just sent", 3);
 await T.recordEvent(db, cfg, req(UA.apple), c, "open");
 check("inside the prefetch window: still 'prefetch'", events(c.id)[0].flagged === "prefetch", events(c.id)[0]);
 
+// ---- your own Gmail loading the image (compose window re-rendering) ----
+const reqRef = (ua, referer) => ({ headers: new Map([["User-Agent", ua], ["CF-Connecting-IP", "24.28.109.0"], ["Referer", referer]]), cf: { city: "Austin", country: "US" } });
+const d = mk("Compose redraw", 30);
+await T.recordEvent(db, cfg, reqRef(UA.chrome, "https://mail.google.com/"), d, "open");
+check("open loaded by a Gmail page directly: 'self', not counted, no alert", events(d.id)[0].flagged === "self" && em(d.id).opens === 0 && alerts(d.id).length === 0, [events(d.id)[0], alerts(d.id)]);
+await T.recordEvent(db, cfg, reqRef(UA.gmail, "https://mail.google.com/"), d, "open");
+check("Gmail's image proxy still counts (that's the recipient)", em(d.id).opens === 1, em(d.id));
+await T.recordEvent(db, cfg, reqRef(UA.chrome, "https://outlook.live.com/"), mk("Outlook web", 30), "open");
+check("other webmail referers aren't treated as you", T.fromOwnGmail(reqRef(UA.chrome, "https://outlook.live.com/")) === false
+  && T.fromOwnGmail(reqRef(UA.chrome, "https://mail.google.com.evil.example/")) === false && T.fromOwnGmail(req(UA.chrome)) === false, "");
+const dc = mk("Click from Gmail", 30);
+await T.recordEvent(db, cfg, reqRef(UA.chrome, "https://mail.google.com/"), dc, "click", 1);
+check("a click from Gmail still counts (recipients click from Gmail too)", em(dc.id).clicks === 1, em(dc.id));
+
+// ---- scheduling clears anything recorded before the send ----
+const s = mk("Scheduled later", 20);
+await T.recordEvent(db, cfg, req(UA.chrome, "203.0.113.77", { city: "Austin", country: "US" }), s, "open");
+check("(setup) an open recorded before scheduling", em(s.id).opens === 1 && alerts(s.id).length === 1, em(s.id));
+const sched = Math.floor(now()) + 86400;
+check("markScheduled finds the email", await T.markScheduled(db, uid, s.token || em(s.id).token, sched), "");
+check("scheduling: earlier opens become 'self', count and alert gone", em(s.id).opens === 0 && em(s.id).first_open === null && alerts(s.id).length === 0
+  && events(s.id)[0].flagged === "self" && em(s.id).scheduled_at === sched, [em(s.id), alerts(s.id)]);
+await T.recordEvent(db, cfg, req(UA.chrome, "203.0.113.78"), em(s.id), "open");
+check("open before the scheduled time: not counted", em(s.id).opens === 0 && alerts(s.id).length === 0, events(s.id));
+
+// ---- a saved draft reopened: Gmail loads the image through its proxy ----
+const dr = mk("Draft reopened", 600);
+await T.recordEvent(db, cfg, req(UA.gmail, "66.249.84.9"), dr, "open");
+check("(setup) proxy load of a reopened draft looks like an open", em(dr.id).opens === 1 && alerts(dr.id).length === 1, em(dr.id));
+const fresh = sqlite.prepare("SELECT * FROM alerts WHERE email_id=?").all(dr.id);
+check("a brand-new alert is held back from the extension", T.settledAlerts(fresh).length === 0, fresh);
+check("...and released once it has settled", T.settledAlerts(fresh, now() + T.ALERT_SETTLE + 1).length === 1, "");
+await T.markSelfView(db, uid, em(dr.id).token);
+check("the extension's 'that's me' a moment later removes the open and its alert", em(dr.id).opens === 0 && alerts(dr.id).length === 0
+  && events(dr.id)[0].flagged === "self", [em(dr.id), alerts(dr.id)]);
+await T.recordEvent(db, cfg, req(UA.gmail, "66.249.84.9"), em(dr.id), "open");
+check("an open right after 'that's me' (draft still open) isn't counted", em(dr.id).opens === 0 && alerts(dr.id).length === 0, events(dr.id));
+const t0 = now();
+const rowsAt = [{ id: 1, ts: t0 - 60 }, { id: 2, ts: t0 - 2 }, { id: 3, ts: t0 - 60 }];
+check("settling stops at the first young alert, so the cursor never skips one", JSON.stringify(T.settledAlerts(rowsAt, t0).map(a => a.id)) === "[1]", "");
+
 // ---- pages ----
 const user = { id: uid, email: "me@x.com", name: "Me", is_admin: 1 };
 const prefs = P.defaultPrefs(cfg);

@@ -83,6 +83,17 @@ function startPendingTry(body) {
 async function trackCompose(root, opts) {
   const body = findBody(root);
   if (!body || body.getAttribute(SKIP)) return true; // already processed
+  // A saved draft that was tracked before (reopened from Drafts, or a scheduled
+  // email you cancelled): it already has our image, so reuse that email
+  // instead of adding a second one.
+  const existing = [...body.querySelectorAll("img")].map(pixelToken).find(Boolean);
+  if (existing) {
+    body.setAttribute(SKIP, "1");
+    body.setAttribute(TOKEN, existing);
+    // Sent right now (not scheduled): its send time is now, not when it was first tracked.
+    if (!(opts && opts.deferWatch)) api("/api/scheduled", { token: existing, at: Math.floor(Date.now() / 1000) });
+    return true;
+  }
   // Attached PDFs marked "Tracked" become tracked attachment tiles (gmail-compose.js).
   // Capped at 90 seconds so a slow upload never holds the email back for long.
   if (window.__mailspyCompose && window.__mailspyCompose.convertPdfs) {
@@ -321,15 +332,50 @@ async function reportSelfView(token) {
   }).catch(() => {});
 }
 
-function checkImg(img) {
-  const src = img.getAttribute("src") || "";
-  if (!serverHost || !(src.includes(serverHost) || src.includes(TRACK_HOST))) return;
+// The token of our tracking image, whether its src is our own address or
+// Gmail's image proxy (which keeps the original address after a "#").
+function pixelToken(img) {
+  const src = (img && img.getAttribute && img.getAttribute("src")) || "";
+  if (!(src.includes(TRACK_HOST) || (serverHost && src.includes(serverHost)))) return null;
   const m = src.match(/\/(?:t|img)\/([A-Za-z0-9_-]{8,})\.gif/);
-  if (!m) return;
-  if (img.closest('[contenteditable="true"]')) return; // the copy you are about to send
+  return m ? m[1] : null;
+}
+
+// Our image inside a compose window (a new email, or a draft you reopened):
+// Gmail loads it right away, through its image proxy for a saved draft, which
+// looks exactly like the recipient opening it. Tell the server it's you. The
+// image has to stay in, since it's the copy that gets sent. Repeated (at most
+// every 5 seconds per email) for as long as the window is open, because Gmail
+// reloads the image when it redraws the compose window.
+var composeReported = new Map();   // token -> last report time
+function reportComposeView(token) {
+  const t = Date.now();
+  if (t - (composeReported.get(token) || 0) < 5000) return;
+  composeReported.set(token, t);
+  cfg().then(({ server, apiKey }) => {
+    if (!server || !apiKey) return;
+    fetch(server.replace(/\/$/, "") + "/api/selfview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
+      body: JSON.stringify({ token })
+    }).catch(() => {});
+  });
+}
+setInterval(() => {
+  if (!alive()) return;
+  document.querySelectorAll('[contenteditable="true"] img').forEach(img => {
+    const tk = pixelToken(img);
+    if (tk && img.offsetParent !== null) reportComposeView(tk);
+  });
+}, 10000);
+
+function checkImg(img) {
+  const token = pixelToken(img);
+  if (!token) return;
+  if (img.closest('[contenteditable="true"]')) { reportComposeView(token); return; } // the copy you are about to send
   img.removeAttribute("src");
   img.remove();
-  reportSelfView(m[1]);
+  reportSelfView(token);
 }
 
 function scan(node) {

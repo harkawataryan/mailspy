@@ -9,17 +9,19 @@
 import { settings, now, json, html, notFound, redirect, readBody, CORS, esc } from "./util.js";
 import { sessionUser, apiUser, checkPassword, hashPassword, makeSession, sessionCookie, SESSION_MAX_AGE,
          loginBlocked, noteLoginFailure, newApiKey, newInviteCode } from "./auth.js";
-import { PIXEL_GIF, prepareEmail, recordEvent, markSelfView, markScheduled, runScheduled, placeOf } from "./tracking.js";
+import { PIXEL_GIF, prepareEmail, recordEvent, markSelfView, markScheduled, runScheduled, placeOf, settledAlerts } from "./tracking.js";
 import { hideTracking, sweepSentCopies } from "./sentcopy.js";
 import * as views from "./views.js";
 import { prefsFor, prefsFromForm } from "./prefs.js";
-import { findPerson, findRecruiters } from "./finder.js";
+import { findPerson, findRecruiters, liRole } from "./finder.js";
+import { draftEmail, claudeKeyFromForm } from "./drafter.js";
+import { learnProfile } from "./learn.js";
 import { cleanPlan, startRetry, retryByToken, sweepRetries } from "./retry.js";
 import { googleEnabled, authUrl, makeState, readState, exchangeCode, saveGmail, disconnectGmail, gmailStatus,
          ensureGoogleSchema, labelEmail, sweepLabels, checksFor } from "./google.js";
 import { sweepReplies, refreshReply } from "./replies.js";
 import { loadPeople, loadPerson, groupCompanies, companyNames, PERSONAL } from "./people.js";
-import { listTemplates, getTemplate, saveTemplate, deleteTemplate, markUsed, templatesFor } from "./templates.js";
+import { listTemplates, getTemplate, saveTemplate, deleteTemplate, markUsed, templatesFor, companyFor } from "./templates.js";
 import { pendingLabels, saveLabels } from "./labels.js";   // older Apps Script labels (kept for anyone still running it)
 import { uploadDoc, deleteDoc, docBeat, createLink, deleteLink, recordLinkClick, MAX_PDF_BYTES,
          saveThumb, thumbResponse, MAX_THUMB_BYTES } from "./docs.js";
@@ -359,7 +361,7 @@ async function handle(req, env, ctx) {
     if (path === "/api/me") {
       const prefs = await prefsFor(db, cfg, uid);
       const gm = googleEnabled(cfg) ? await gmailStatus(db, uid) : { connected: false };
-      return json({ email: user.email, name: user.name, notify: prefs.notify, track_all_links: prefs.track_all_links, pdf_tiles: prefs.pdf_tiles, gmail: gm.connected });
+      return json({ email: user.email, name: user.name, notify: prefs.notify, track_all_links: prefs.track_all_links, pdf_tiles: prefs.pdf_tiles, gmail: gm.connected, ai: !!prefs.claude_key });
     }
     if (path === "/api/prepare" && method === "POST") {
       const data = await readBody(req);
@@ -408,6 +410,18 @@ async function handle(req, env, ctx) {
       return json({ pending: await pendingLabels(db, uid) });
     }
     // Templates, for the Templates pop-up in Gmail compose
+    // AI drafter: writes or improves the email in Gmail compose with the user's Claude key
+    if (path === "/api/draft" && method === "POST") {
+      const prefs = await prefsFor(db, cfg, uid);
+      const d = await readBody(req);
+      const email = String(d.to_email || "").trim().toLowerCase().slice(0, 200);
+      const domain = email.includes("@") ? email.split("@")[1] : "";
+      const input = { ...d, to_email: email };
+      if (!input.company && domain) input.company = await companyFor(env, domain).catch(() => "");
+      const role = domain && d.to_name ? await liRole(env, domain, String(d.to_name)) : "";
+      const out = await draftEmail(cfg, prefs, user, input, role);
+      return json({ ...out, role: role || undefined, company: input.company || undefined }, out.error ? (out.needsKey ? 400 : 502) : 200);
+    }
     if (path === "/api/templates") {
       if (method === "POST") {
         const out = await saveTemplate(db, uid, await readBody(req));
@@ -446,7 +460,7 @@ async function handle(req, env, ctx) {
       const r = Number.isFinite(since)
         ? await db.prepare("SELECT * FROM alerts WHERE user_id=? AND id>? ORDER BY id LIMIT 100").bind(uid, since).all()
         : await db.prepare("SELECT * FROM alerts WHERE user_id=? ORDER BY id DESC LIMIT 100").bind(uid).all();
-      return json(r.results);
+      return json(Number.isFinite(since) ? settledAlerts(r.results) : r.results);
     }
     if (path === "/api/emails") {
       return json((await db.prepare("SELECT * FROM emails WHERE user_id=? ORDER BY id DESC LIMIT 200").bind(uid).all()).results);
@@ -537,8 +551,9 @@ async function handle(req, env, ctx) {
     const r = await db.prepare(
       "SELECT id, email_id, kind, message, ts FROM alerts WHERE user_id=? AND id>? ORDER BY id LIMIT 20")
       .bind(uid, since).all();
-    const max = r.results.length ? r.results[r.results.length - 1].id : since;
-    return json({ alerts: r.results, max });
+    const alerts = settledAlerts(r.results);
+    const max = alerts.length ? alerts[alerts.length - 1].id : since;
+    return json({ alerts, max });
   }
 
   if (path === "/compose") {
@@ -606,6 +621,18 @@ async function handle(req, env, ctx) {
     return html(views.companyPage({ user, company: c }));
   }
 
+  // AI drafter: learn from my Gmail (sent, tracked and scheduled emails, and my resume)
+  if (path === "/settings/ai-learn" && method === "POST") {
+    const form = await readBody(req);
+    const file = form.resume && typeof form.resume === "object" && form.resume.size ? form.resume : null;
+    if (file && !/pdf/i.test(file.type || "") && !/\.pdf$/i.test(file.name || "")) return json({ error: "Upload your resume as a PDF." }, 400);
+    const prev = await prefsFor(db, cfg, uid);
+    const out = await learnProfile(db, cfg, uid, prev, file);
+    if (out.error) return json(out, 400);
+    await db.prepare("UPDATE users SET prefs=? WHERE id=?").bind(JSON.stringify({ ...prev, ...out }), uid).run();
+    return json({ ok: true, learned: out.ai_learned, examples: out.ai_examples.length });
+  }
+
   if (path === "/settings") {
     let notice = "";
     if (method === "POST") {
@@ -616,7 +643,19 @@ async function handle(req, env, ctx) {
         user.theme = t;
         if (req.headers.get("X-Autosave")) return json({ ok: true });
         notice = '<div class="note ok">Appearance saved.</div>';
-      } else if (form.action === "prefs") {
+      } else if (form.action === "prefs" || form.action === "claude_key_remove" || form.action === "ai_forget") {
+        const prev = await prefsFor(db, cfg, uid);
+        if (form.action !== "prefs") {
+          const cleared = form.action === "claude_key_remove" ? { claude_key: "", claude_key_hint: "" }
+            : { ai_resume: "", ai_style: "", ai_examples: [], ai_learned: null };
+          await db.prepare("UPDATE users SET prefs=? WHERE id=?").bind(JSON.stringify({ ...prev, ...cleared }), uid).run();
+          return redirect(form.action === "ai_forget" ? "/settings#ai_learn" : "/settings#claude_key");
+        }
+        Object.assign(form, await claudeKeyFromForm(cfg, form, prev));
+        // the learned profile: examples aren't on the form, and the text boxes only show once something is learned
+        form.ai_examples = prev.ai_examples; form.ai_learned = prev.ai_learned;
+        if (!("ai_resume" in form)) form.ai_resume = prev.ai_resume;
+        if (!("ai_style" in form)) form.ai_style = prev.ai_style;
         const prefs = prefsFromForm(cfg, form);
         await db.prepare("UPDATE users SET prefs=? WHERE id=?").bind(JSON.stringify(prefs), uid).run();
         if (req.headers.get("X-Autosave")) return json({ ok: true });   // settings page saves as you go

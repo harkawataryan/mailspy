@@ -29,7 +29,14 @@ export function defaultPrefs(cfg) {
     ignore_recipients: [],                      // "name@x.com" or "@x.com"
     ignore_ips: [],
     hunter_key: "",
-    search_key: "",                             // optional Tavily or SerpApi key: finds people via public LinkedIn profiles                             // optional Hunter.io API key for the email finder (never sent to the extension)
+    search_key: "",                             // optional Tavily or SerpApi key: finds people via public LinkedIn profiles
+    claude_key: "",                             // the user's Claude API key for the AI drafter, encrypted (drafter.js); never sent to the extension
+    claude_key_hint: "",                        // its last 4 characters, to show which key is saved
+    ai_about: "",                               // what the drafter knows about the user (background, what they're after)
+    ai_resume: "",                              // learned from their resume and emails (learn.js); editable
+    ai_style: "",                               // learned: how they write; editable
+    ai_examples: [],                            // learned: up to 3 of their own emails to imitate [{subject, body, status}]
+    ai_learned: null,                           // { at, emails, resume } from the last "Learn from my Gmail"
   };
 }
 
@@ -69,6 +76,15 @@ export function normalizePrefs(cfg, raw = {}) {
     ignore_ips: cleanList(r.ignore_ips, 50, IP_RE),
     hunter_key: /^[A-Za-z0-9]{20,80}$/.test(String(r.hunter_key || "").trim()) ? String(r.hunter_key).trim() : "",
     search_key: /^[A-Za-z0-9_-]{20,100}$/.test(String(r.search_key || "").trim()) ? String(r.search_key).trim() : "",
+    claude_key: /^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}$/.test(String(r.claude_key || "")) ? String(r.claude_key) : "",
+    claude_key_hint: /^[A-Za-z0-9_-]{4}$/.test(String(r.claude_key_hint || "")) ? String(r.claude_key_hint) : "",
+    ai_about: String(r.ai_about || "").replace(/\r/g, "").trim().slice(0, 2000),
+    ai_resume: String(r.ai_resume || "").replace(/\r/g, "").trim().slice(0, 2500),
+    ai_style: String(r.ai_style || "").replace(/\r/g, "").trim().slice(0, 2000),
+    ai_examples: (Array.isArray(r.ai_examples) ? r.ai_examples : []).filter(e => e && typeof e.body === "string").slice(0, 3)
+      .map(e => ({ subject: String(e.subject || "").slice(0, 300), body: e.body.slice(0, 1800), status: String(e.status || "").slice(0, 40) })),
+    ai_learned: r.ai_learned && Number(r.ai_learned.at) > 0
+      ? { at: Math.floor(Number(r.ai_learned.at)), emails: clampInt(r.ai_learned.emails, 0, 100, 0), resume: String(r.ai_learned.resume || "").slice(0, 120) } : null,
   };
 }
 
@@ -99,6 +115,13 @@ export function prefsFromForm(cfg, form) {
     ignore_ips: form.ignore_ips,
     hunter_key: form.hunter_key,
     search_key: form.search_key,
+    claude_key: form.claude_key,                // already encrypted by the Settings handler (claudeKeyFromForm)
+    claude_key_hint: form.claude_key_hint,
+    ai_about: form.ai_about,
+    ai_resume: form.ai_resume,
+    ai_style: form.ai_style,
+    ai_examples: form.ai_examples,              // not on the form: carried over by the Settings handler
+    ai_learned: form.ai_learned,
   });
 }
 
