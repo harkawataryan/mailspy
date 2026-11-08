@@ -1,0 +1,110 @@
+# Publishes the Chrome extension to the Chrome Web Store whenever a push to main
+# changes it, so everyone who installed MailSpy from the store gets the update
+# (Chrome updates installed extensions on its own, usually within a few hours).
+#
+# A new version only goes out when extension/manifest.json has a new version.
+# `npm run deploy` bumps it whenever the extension's files change, so: change
+# the extension, deploy, commit, push -> it's in the store after review.
+# Pushes that change the extension without a new version are skipped.
+#
+# One-time setup (see docs/chrome-web-store.md): publish the extension once by
+# hand, then add these repository secrets:
+#   CWS_EXTENSION_ID, CWS_CLIENT_ID, CWS_CLIENT_SECRET, CWS_REFRESH_TOKEN
+# Until they exist, this workflow does nothing.
+
+name: Publish extension
+
+on:
+  push:
+    branches: [main]
+    paths: ["extension/**"]
+  workflow_dispatch: {}
+
+concurrency:
+  group: publish-extension
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+      CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+      CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+      REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+    steps:
+      - name: Skip if the Web Store isn't set up yet
+        id: setup
+        run: |
+          if [ -z "$EXTENSION_ID" ] || [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ] || [ -z "$REFRESH_TOKEN" ]; then
+            echo "Chrome Web Store secrets aren't set; nothing to publish."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.setup.outputs.ready == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.setup.outputs.ready == 'true'
+        with:
+          node-version: 22
+
+      - name: Get an access token
+        if: steps.setup.outputs.ready == 'true'
+        id: token
+        run: |
+          TOKEN=$(curl -sf https://oauth2.googleapis.com/token \
+            -d client_id="$CLIENT_ID" -d client_secret="$CLIENT_SECRET" \
+            -d refresh_token="$REFRESH_TOKEN" -d grant_type=refresh_token | jq -r .access_token)
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then echo "::error::Couldn't get a Web Store access token. Check the CWS_ secrets."; exit 1; fi
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Compare versions
+        if: steps.setup.outputs.ready == 'true'
+        id: ver
+        env:
+          TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          MINE=$(jq -r .version extension/manifest.json)
+          STORE=$(curl -sf -H "Authorization: Bearer $TOKEN" -H "x-goog-api-version: 2" \
+            "https://www.googleapis.com/chromewebstore/v1.1/items/$EXTENSION_ID?projection=DRAFT" | jq -r '.crxVersion // empty')
+          echo "repo: $MINE, store: ${STORE:-unknown}"
+          if [ "$MINE" = "$STORE" ]; then
+            echo "Version $MINE is already in the store; nothing to publish."
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "version=$MINE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package
+        if: steps.setup.outputs.ready == 'true' && steps.ver.outputs.new == 'true'
+        run: node cloudflare/scripts/package-extension.mjs
+
+      - name: Upload
+        if: steps.setup.outputs.ready == 'true' && steps.ver.outputs.new == 'true'
+        env:
+          TOKEN: ${{ steps.token.outputs.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          OUT=$(curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H "x-goog-api-version: 2" \
+            -T "dist/mailspy-extension-$VERSION.zip" \
+            "https://www.googleapis.com/upload/chromewebstore/v1.1/items/$EXTENSION_ID")
+          echo "$OUT"
+          if [ "$(echo "$OUT" | jq -r .uploadState)" != "SUCCESS" ]; then echo "::error::Upload failed"; exit 1; fi
+
+      - name: Publish
+        if: steps.setup.outputs.ready == 'true' && steps.ver.outputs.new == 'true'
+        env:
+          TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          OUT=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "x-goog-api-version: 2" -H "Content-Length: 0" \
+            "https://www.googleapis.com/chromewebstore/v1.1/items/$EXTENSION_ID/publish")
+          echo "$OUT"
+          case "$(echo "$OUT" | jq -r '.status[0] // empty')" in
+            OK|ITEM_PENDING_REVIEW) echo "Submitted. It goes live after Google's review (usually under a day for updates)." ;;
+            *) echo "::error::Publish failed"; exit 1 ;;
+          esac
