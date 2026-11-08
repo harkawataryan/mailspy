@@ -79,13 +79,13 @@ async function get(url, opts = {}) {
   } catch { return null; }
 }
 
-async function cached(env, key, fn) {
+async function cached(env, key, fn, ttl = CACHE_TTL) {
   if (env.DOCS) {
     const hit = await env.DOCS.get(key, { type: "json" }).catch(() => null);
     if (hit) return hit;
   }
   const val = await fn();
-  if (env.DOCS && val) await env.DOCS.put(key, JSON.stringify(val), { expirationTtl: CACHE_TTL }).catch(() => {});
+  if (env.DOCS && val && !val.error) await env.DOCS.put(key, JSON.stringify(val), { expirationTtl: ttl }).catch(() => {});
   return val;
 }
 
@@ -540,6 +540,92 @@ async function wikidataPeople(env, wid) {
 
 const keyOf = name => (splitName(name) || {}).first + " " + (splitName(name) || {}).last;
 
+// ------------------------------------------------------------------ LinkedIn, via web search
+// Recruiters mostly appear on LinkedIn, not on company websites. With a search
+// key (Tavily or SerpApi, both have free plans), MailSpy asks a search engine
+// for public LinkedIn profiles of recruiters at the company and reads the
+// result titles ("Jane Doe - Technical Recruiter - Stripe | LinkedIn").
+// MailSpy never opens LinkedIn itself. One search per company, saved for two weeks.
+
+const LI_TTL = 14 * 86400;
+
+async function searchWeb(key, query) {
+  if (/^tvly-/i.test(key)) {
+    const r = await get("https://api.tavily.com/search", { method: "POST", ms: 12000,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ query, search_depth: "basic", max_results: 20, include_domains: ["linkedin.com"] }) });
+    if (!r) return { error: "Couldn't reach the search service." };
+    if (r.status === 401 || r.status === 403) return { error: "Your search key wasn't accepted. Check it in Settings." };
+    if (r.status === 429 || r.status === 432) return { error: "The search service says you've used this month's free searches." };
+    const d = await r.json().catch(() => ({}));
+    return { results: (d.results || []).map(x => ({ title: x.title || "", url: x.url || "", snippet: x.content || "" })) };
+  }
+  // SerpApi (Google results)
+  const r = await get(`https://serpapi.com/search.json?engine=google&num=20&q=${encodeURIComponent(query)}&api_key=${encodeURIComponent(key)}`, { ms: 15000 });
+  if (!r) return { error: "Couldn't reach the search service." };
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.error) return { error: /invalid api key/i.test(d.error || "") ? "Your search key wasn't accepted. Check it in Settings."
+    : /run out|limit/i.test(d.error || "") ? "The search service says you've used this month's free searches." : `Search: ${d.error || r.status}` };
+  return { results: (d.organic_results || []).map(x => ({ title: x.title || "", url: x.link || "", snippet: x.snippet || "" })) };
+}
+
+const CRED_RE = /,?\s*(?:MBA|PhD|Ph\.D\.|CPA|PMP|SHRM-?\w*|PHR|SPHR|CIR|MS|MA|BS|BA|MSc|BSc|Jr\.?|Sr\.?|II|III)\b\.?/g;
+
+// "Jane Doe - Technical Recruiter - Stripe | LinkedIn" -> { name, position, company }
+export function parseProfileTitle(title) {
+  const t = String(title || "").replace(/\s*[|–—-]\s*LinkedIn\s*$/i, "").replace(/\s*\|\s*LinkedIn.*$/i, "").trim();
+  const parts = t.split(/\s+[-–—|]\s+/).map(x => x.trim()).filter(Boolean);
+  if (!parts.length) return null;
+  const name = parts[0].replace(/\(.*?\)/g, "").replace(CRED_RE, "").replace(/[^\p{L}\p{M}'’. -]/gu, "").replace(/\s+/g, " ").trim();
+  if (!/^\p{Lu}[\p{L}\p{M}'’.-]+(?: \p{Lu}?[\p{L}\p{M}'’.-]+){1,3}$/u.test(name)) return null;
+  let position = "", company = "";
+  if (parts.length >= 3) { position = parts[1]; company = parts[2]; }
+  else if (parts.length === 2) {
+    const at = parts[1].match(/^(.*?)\s+(?:at|@)\s+(.+)$/i);
+    if (at) { position = at[1]; company = at[2]; } else company = parts[1];
+  }
+  const at2 = position.match(/^(.*?)\s+(?:at|@)\s+(.+)$/i);
+  if (at2 && !company) { position = at2[1]; company = at2[2]; }
+  return { name, position, company };
+}
+
+function worksThere(text, org, domain) {
+  const t = ` ${String(text || "").toLowerCase()} `;
+  const names = [org.toLowerCase(), domain.split(".")[0].toLowerCase()].filter((x, i, a) => x && a.indexOf(x) === i);
+  const hit = names.some(n => t.includes(n));
+  if (!hit) return false;
+  // "ex-Stripe", "formerly at Stripe", "previously Stripe": not there any more
+  return !names.some(n => new RegExp(`\\b(ex-?|former(?:ly)?(?: at)?|previously(?: at)?|alum(?:na|nus|ni)? of)\\s*${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i").test(t));
+}
+
+export async function linkedinPeople(env, key, org, domain) {
+  if (!key || !org) return { list: [] };
+  return cached(env, `find:li:v1:${org.toLowerCase()}|${domain}`, async () => {
+    const q = `site:linkedin.com/in ("recruiter" OR "talent acquisition" OR "sourcer" OR "talent partner" OR "recruiting") "${org}"`;
+    const res = await searchWeb(key, /^tvly-/i.test(key) ? `${org} recruiter OR "talent acquisition" OR sourcer OR "recruiting" LinkedIn` : q);
+    if (res.error) return { list: [], error: res.error };
+    const list = [];
+    const seen = new Set();
+    for (const x of res.results) {
+      if (!/linkedin\.com\/in\//i.test(x.url)) continue;
+      const p = parseProfileTitle(x.title);
+      if (!p) continue;
+      const about = `${p.company} ${p.position} ${x.snippet}`;
+      if (!worksThere(p.company || about, org, domain) && !worksThere(about, org, domain)) continue;
+      const k = p.name.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      let position = p.position;
+      if (!position || position.toLowerCase() === org.toLowerCase()) {
+        const m = x.snippet.match(/\b((?:senior |lead |technical |university |campus |executive |principal |staff )*(?:recruiter|sourcer|talent (?:acquisition|partner)[\w ]*|recruiting (?:coordinator|manager|lead)))\b/i);
+        position = m ? m[1].replace(/\s+(?:at|@|in|with)\s+.*$/i, "").trim().replace(/\b\w/g, c => c.toUpperCase()) : "";
+      }
+      list.push({ name: p.name, position, linkedin: x.url.split("?")[0] });
+    }
+    return { list: list.slice(0, 15) };
+  }, LI_TTL);
+}
+
 export async function findPeople(env, prefs, company) {
   if (!String(company || "").trim()) return { error: "Enter the company name or website." };
   const out = { mode: "recruiters", query: { company }, people: [], groups: [], guesses: [], notes: [], published: [], links: [] };
@@ -578,7 +664,10 @@ export async function findPeople(env, prefs, company) {
   const org = out.organization || (label0.charAt(0).toUpperCase() + label0.slice(1));
   if (!out.organization) out.organization = org;
 
-  const [ev, team, wd] = await Promise.all([evidenceFor(env, out.domain), fromTeamPages(env, out.domain, org), wikidataPeople(env, wid)]);
+  const [ev, team, wd, li] = await Promise.all([evidenceFor(env, out.domain), fromTeamPages(env, out.domain, org), wikidataPeople(env, wid),
+    linkedinPeople(env, prefs.search_key, org, out.domain)]);
+  if (li.error) out.notes.push(li.error);
+  for (const p of li.list) all.push({ name: p.name, position: p.position, source: "LinkedIn", linkedin: p.linkedin });
   for (const p of team.list) all.push({ name: p.name, position: p.position, source: "their website", where: p.where });
   for (const p of wd) all.push({ name: p.name, position: p.position, source: "Wikidata" });
   const recent = Date.now() / 1000 - 5 * 365 * 86400;           // addresses older than ~5 years are often gone
@@ -635,7 +724,9 @@ export async function findPeople(env, prefs, company) {
   out.links.push({ label: "Talent team on LinkedIn", href: `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(`${org} talent acquisition`)}` });
   const hasRecruiters = out.groups.some(g => g.key === "recruiting");
   if (!out.groups.length) out.notes.push(`Couldn't find people at ${org} in public sources. Find one on LinkedIn (links below), then use "A person" with their name.`);
-  else if (!hasRecruiters) out.notes.push(`No recruiters listed publicly, so here are other people at ${org}. Founders and engineering leads often pass emails on, or find a recruiter on LinkedIn (links below).`);
+  else if (!hasRecruiters) out.notes.push(prefs.search_key
+    ? `No recruiters found for ${org}, so here are other people there. Founders and engineering leads often pass emails on, or try LinkedIn (links below).`
+    : `No recruiters on public pages. Add a free search key in Settings to find ${org}'s recruiters from LinkedIn; meanwhile, here are other people there.`);
   return out;
 }
 

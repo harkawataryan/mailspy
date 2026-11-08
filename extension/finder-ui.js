@@ -78,6 +78,8 @@
     .pr:hover, .pp.open .pr { background: #f8f9fa; }
     .pr .t { flex: 1; min-width: 0; }
     .pn { font-weight: 500; color: #1f1f1f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    a.li { color: #0b57d0; text-decoration: none; }
+    a.li:hover { text-decoration: underline; }
     .pf { flex: none; font-size: 12px; font-weight: 500; color: #0b57d0; white-space: nowrap; }
     .px { padding: 0 0 6px 10px; background: #f8f9fa; }
     .px .try { margin: 4px 8px 4px 4px; }
@@ -317,7 +319,8 @@
         html += '<div class="h">' + esc(g.label) + "</div>";
         g.people.forEach(function (p) {
           var i = people.push(p) - 1;
-          var sub = [p.position, p.source === "their website" ? "" : p.source].filter(Boolean).map(esc).join(" · ");
+          var sub = [p.position, p.source === "their website" || p.source === "LinkedIn" ? "" : p.source].filter(Boolean).map(esc).join(" · ") +
+            (p.linkedin ? (p.position ? " · " : "") + '<a class="li" href="' + esc(p.linkedin) + '" target="_blank" rel="noreferrer">LinkedIn ↗</a>' : "");
           html += '<div class="pp" data-i="' + i + '"><div class="pr"><div class="t"><div class="pn">' + esc(p.name) + "</div>" +
             (sub ? '<div class="sub">' + sub + "</div>" : "") + '</div><span class="pf">' + (p.email ? "Email ▾" : "Find email ▾") + "</span></div>" +
             '<div class="px" hidden></div></div>';
@@ -336,6 +339,8 @@
 
       body.querySelectorAll(".pp").forEach(function (pp) {
         var p = people[+pp.getAttribute("data-i")], px = pp.querySelector(".px"), pf = pp.querySelector(".pf"), loaded = false;
+        var li = pp.querySelector("a.li");
+        if (li) li.addEventListener("click", function (e) { e.stopPropagation(); });
         pp.querySelector(".pr").addEventListener("click", async function () {
           var open = px.hidden;
           px.hidden = !open;

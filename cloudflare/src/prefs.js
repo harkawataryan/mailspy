@@ -26,7 +26,8 @@ export function defaultPrefs(cfg) {
     notify: Object.fromEntries(NOTIFY_KINDS.map(([k]) => [k, true])),
     ignore_recipients: [],                      // "name@x.com" or "@x.com"
     ignore_ips: [],
-    hunter_key: "",                             // optional Hunter.io API key for the email finder (never sent to the extension)
+    hunter_key: "",
+    search_key: "",                             // optional Tavily or SerpApi key: finds people via public LinkedIn profiles                             // optional Hunter.io API key for the email finder (never sent to the extension)
   };
 }
 
@@ -64,6 +65,7 @@ export function normalizePrefs(cfg, raw = {}) {
     ignore_recipients: cleanList(r.ignore_recipients, 200, /^[^\s@]*@[^\s@]+\.[^\s@]+$/),
     ignore_ips: cleanList(r.ignore_ips, 50, IP_RE),
     hunter_key: /^[A-Za-z0-9]{20,80}$/.test(String(r.hunter_key || "").trim()) ? String(r.hunter_key).trim() : "",
+    search_key: /^[A-Za-z0-9_-]{20,100}$/.test(String(r.search_key || "").trim()) ? String(r.search_key).trim() : "",
   };
 }
 
@@ -92,6 +94,7 @@ export function prefsFromForm(cfg, form) {
     ignore_recipients: form.ignore_recipients,
     ignore_ips: form.ignore_ips,
     hunter_key: form.hunter_key,
+    search_key: form.search_key,
   });
 }
 

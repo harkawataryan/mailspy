@@ -9,10 +9,12 @@
     "setup": "node scripts/setup.mjs",
     "set-password": "node scripts/setup.mjs --password-only",
     "logs": "wrangler tail",
-    "predeploy": "node scripts/bump-extension.mjs",
+    "predeploy": "node ../tests/run-unit.mjs && node scripts/bump-extension.mjs",
     "package": "node scripts/bump-extension.mjs && node scripts/package-extension.mjs",
     "store-assets": "node scripts/store-assets.mjs",
-    "google-secrets": "wrangler secret put GOOGLE_CLIENT_ID && wrangler secret put GOOGLE_CLIENT_SECRET"
+    "google-secrets": "wrangler secret put GOOGLE_CLIENT_ID && wrangler secret put GOOGLE_CLIENT_SECRET",
+    "test": "node ../tests/run-unit.mjs",
+    "test:e2e": "node ../tests/e2e/run.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

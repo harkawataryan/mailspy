@@ -750,6 +750,11 @@ export function settingsPage({ cfg, base, user, prefs, ip = "", notice = "", gma
       <label for="hunter_key">Hunter.io API key</label>
       <input type="password" id="hunter_key" name="hunter_key" autocomplete="off" spellcheck="false" placeholder="Paste your key" value="${esc(prefs.hunter_key || "")}">
       <div class="hint">Free at <a class="link" href="https://hunter.io/users/sign_up" target="_blank" rel="noreferrer">hunter.io</a> (about 50 lookups a month), then copy it from <a class="link" href="https://hunter.io/api-keys" target="_blank" rel="noreferrer">API keys</a>. Results are saved for 30 days, so repeat searches are free.</div>
+      <label for="search_key" style="margin-top:16px">Search key, for recruiters on LinkedIn</label>
+      <input type="password" id="search_key" name="search_key" autocomplete="off" spellcheck="false" placeholder="Paste a Tavily or SerpApi key" value="${esc(prefs.search_key || "")}">
+      <div class="hint">Finds recruiters (and other people) at a company from their public LinkedIn profiles, through a web search; MailSpy never opens LinkedIn itself.
+        Free: <a class="link" href="https://app.tavily.com/" target="_blank" rel="noreferrer">Tavily</a> (about 1,000 searches a month, no card) or
+        <a class="link" href="https://serpapi.com/users/sign_up" target="_blank" rel="noreferrer">SerpApi</a>. Each company is searched once every two weeks at most.</div>
     </div></div>
 
   <noscript><div class="savebar"><button class="btn primary" type="submit">Save settings</button></div></noscript>
@@ -1211,7 +1216,7 @@ export function findPage({ user, hasKey, form = {}, result = null }) {
     const groups = (result.groups || []).map(g => `
       <div class="panel"><div class="ph"><h2>${esc(g.label)}<span class="count">${g.people.length}</span></h2></div>
         <div style="overflow-x:auto"><table><thead><tr><th>Person</th><th>Email</th><th></th></tr></thead><tbody>
-        ${g.people.map(p => `<tr><td><div class="t1">${esc(p.name)}</div><div class="t2">${esc([p.position, p.source === "their website" ? "" : p.source].filter(Boolean).join(" · "))}</div></td>
+        ${g.people.map(p => `<tr><td><div class="t1">${esc(p.name)}</div><div class="t2">${esc([p.position, p.source === "their website" || p.source === "LinkedIn" ? "" : p.source].filter(Boolean).join(" · "))}${p.linkedin ? `${p.position ? " · " : ""}<a class="link" href="${esc(p.linkedin)}" target="_blank" rel="noreferrer">LinkedIn ↗</a>` : ""}</div></td>
           <td>${p.email ? `<span class="mono">${esc(p.email)}</span> <span class="tag" style="color:var(--accent);border-color:var(--accent)">known</span>` : '<span class="t2">not public</span>'}</td>
           <td><div class="actions">${p.email ? actions(p.email) : `<a class="btn sm" href="/find?${esc(new URLSearchParams({ mode: "person", name: p.name, company: result.domain }).toString())}">Find email</a>`}</div></td></tr>`).join("")}
         </tbody></table></div></div>`).join("");
