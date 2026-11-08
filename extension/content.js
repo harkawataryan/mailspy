@@ -127,6 +127,7 @@ async function trackCompose(root, opts) {
     else if (mc.watchRetry) mc.watchRetry(data.token, plan, root);
   }
   chrome.runtime.sendMessage("poll");  // wake the alert poller
+  window.dispatchEvent(new Event("mailspy:sent"));   // gmail-checks.js: show the checkmark soon
   return true;
 }
 

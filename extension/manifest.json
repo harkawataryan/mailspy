@@ -44,7 +44,8 @@
         "content.js",
         "gmail-button.js",
         "finder-ui.js",
-        "gmail-compose.js"
+        "gmail-compose.js",
+        "gmail-checks.js"
       ],
       "run_at": "document_idle"
     },

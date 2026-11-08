@@ -16,7 +16,7 @@ import { prefsFor, prefsFromForm } from "./prefs.js";
 import { findPerson, findRecruiters } from "./finder.js";
 import { cleanPlan, startRetry, retryByToken, sweepRetries } from "./retry.js";
 import { googleEnabled, authUrl, makeState, readState, exchangeCode, saveGmail, disconnectGmail, gmailStatus,
-         ensureGoogleSchema, labelEmail, sweepLabels } from "./google.js";
+         ensureGoogleSchema, labelEmail, sweepLabels, checksFor } from "./google.js";
 import { sweepReplies, refreshReply } from "./replies.js";
 import { loadPeople, loadPerson, groupCompanies, companyNames, PERSONAL } from "./people.js";
 import { listTemplates, getTemplate, saveTemplate, deleteTemplate, markUsed, templatesFor } from "./templates.js";
@@ -439,6 +439,8 @@ async function handle(req, env, ctx) {
       // "via Gmail" etc. instead of the mail provider's data centre (the extension shows geo as is)
       return json((await db.prepare(ACTIVITY_SQL).bind(uid, 50).all()).results.map(shownActivity));
     }
+    // ✔ / ✔✔ for the Gmail tab to draw on its message list
+    if (path === "/api/checks") return json(await checksFor(db, uid));
     if (path === "/api/alerts") {
       const since = parseInt(url.searchParams.get("since") || "", 10);
       const r = Number.isFinite(since)

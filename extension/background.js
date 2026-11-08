@@ -131,7 +131,7 @@ async function poll() {
 async function reattach() {
   try {
     for (const t of await chrome.tabs.query({ url: GMAIL })) {
-      try { await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["content.js", "gmail-button.js", "finder-ui.js", "gmail-compose.js"] }); } catch (e) {}
+      try { await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["content.js", "gmail-button.js", "finder-ui.js", "gmail-compose.js", "gmail-checks.js"] }); } catch (e) {}
     }
   } catch (e) {}
 }

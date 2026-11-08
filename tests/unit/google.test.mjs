@@ -63,7 +63,7 @@ globalThis.fetch = async (url, opts = {}) => {
       const msg = gm.msgs[m[1]]; if (!msg) return J({}, 404);
       const b = JSON.parse(body);
       msg.labels = [...new Set([...(msg.labels || []).filter(x => !b.removeLabelIds.includes(x)), ...b.addLabelIds])];
-      return J({ id: msg.id });
+      return J({ id: msg.id, threadId: "thr-" + msg.id });
     }
   }
   return J({ error: "unexpected " + url }, 500);
@@ -156,6 +156,26 @@ await G.saveGmail(db, cfg, uid, g);
 gm.calls = [];
 await G.disconnectGmail(db, cfg, uid);
 check("disconnect revokes at Google and clears the token", gm.calls.some(c => c.startsWith("POST /revoke")) && !(await G.gmailStatus(db, uid)).connected, gm.calls);
+
+// ✔ / ✔✔ for the Gmail tab: the conversation id is saved when labelling
+const labelled = sqlite.prepare("SELECT gmail_msg, reply_thread FROM emails WHERE gmail_msg IS NOT NULL ORDER BY id LIMIT 1").get();
+check("labelling saves the Gmail conversation id", labelled && labelled.reply_thread === "thr-" + labelled.gmail_msg, labelled);
+const ck = (to, subj, opens, msg, thread, age = 10) => {
+  const id = mk(to, subj, t - age, opens);
+  sqlite.prepare("UPDATE emails SET gmail_msg=?, reply_thread=? WHERE id=?").run(msg, thread, id);
+  return id;
+};
+ck("k1@a.com", "One", 0, "g1", "th1");
+ck("k2@a.com", "Two", 2, "g2", "th1");             // same conversation, opened
+ck("k3@a.com", "Three", 0, "g3", null);            // conversation not known yet
+ck("k4@a.com", "Old", 1, "g4", "th4", 100 * 86400); // too old to matter
+const marks = await G.checksFor(db, uid);
+check("checks: a conversation with an opened email shows opened", marks.th1 && marks.th1.s === "opened" && marks.th1.n === 2, marks.th1);
+check("checks: each message id has its own entry", marks.g1.s === "sent" && marks.g2.s === "opened" && marks.g2.n === 2, [marks.g1, marks.g2]);
+check("checks: falls back to the sent message id", marks.g3 && marks.g3.s === "sent", marks.g3);
+check("checks: emails older than 90 days left out", !marks.g4 && !marks.th4, Object.keys(marks));
+const other = Number(sqlite.prepare("INSERT INTO users(email,name,password_hash,api_key,is_admin,created_at) VALUES('someone-else@x.com','S','!google','k2',0,?)").run(now()).lastInsertRowid);
+check("checks: only your own emails", Object.keys(await G.checksFor(db, other)).length === 0, "");
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 if (results.some(r => !r)) process.exit(1);

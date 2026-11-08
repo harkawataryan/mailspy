@@ -255,8 +255,9 @@ export async function labelEmail(env, cfg, emailId) {
       return;
     }
     // Only if nobody swapped the message meanwhile (sentcopy.js replaces it with a copy).
-    await db.prepare("UPDATE emails SET gmail_msg=?, gmail_label=? WHERE id=? AND COALESCE(gmail_msg, '')=?")
-      .bind(msg, want, e.id, e.gmail_msg || "").run();
+    // The conversation id too, so the extension can put ✔ / ✔✔ on the right row in Gmail.
+    await db.prepare("UPDATE emails SET gmail_msg=?, gmail_label=?, reply_thread=COALESCE(reply_thread, ?) WHERE id=? AND COALESCE(gmail_msg, '')=?")
+      .bind(msg, want, res.threadId || null, e.id, e.gmail_msg || "").run();
   } catch (err) {
     if (/Gmail 404/.test(String(err))) {
       // a label was deleted in Gmail: make them again next time
@@ -265,6 +266,28 @@ export async function labelEmail(env, cfg, emailId) {
     console.error("gmail label:", err);
   }
 }
+
+// ✔ / ✔✔ for the Gmail tab to draw next to each tracked conversation (Gmail hides the
+// labels themselves when Mailsuite made them). Keyed by Gmail thread id (hex, the same
+// as the row's data-legacy-thread-id), and by the sent message id as a fallback: a new
+// conversation's id is its first message's id. Opened wins when a thread has several.
+export async function checksFor(db, uid) {
+  await ensureGoogleSchema(db);
+  const rows = (await db.prepare(`SELECT reply_thread, gmail_msg, opens, clicks, last_open, replied_at FROM emails
+    WHERE user_id=? AND created_at > ? AND (reply_thread IS NOT NULL OR gmail_msg IS NOT NULL)
+    ORDER BY id DESC LIMIT 500`).bind(uid, now() - CHECK_DAYS * 86400).all()).results;
+  const out = {};
+  for (const r of rows) {
+    const v = { s: wantOf(r), n: r.opens || 0, c: r.clicks || 0, last: r.last_open || null, replied: r.replied_at || null };
+    for (const k of new Set([r.reply_thread, r.gmail_msg].filter(Boolean))) {
+      const old = out[k];
+      if (!old || (old.s === "sent" && v.s === "opened")) out[k] = { ...v };
+      else if (old.s === v.s) { old.n += v.n; old.c += v.c; old.last = Math.max(old.last || 0, v.last || 0) || null; old.replied = old.replied || v.replied; }
+    }
+  }
+  return out;
+}
+const CHECK_DAYS = 90;
 
 // Scheduled sweep: label anything recent that's out of date (new sends, missed opens).
 export async function sweepLabels(env, cfg) {
