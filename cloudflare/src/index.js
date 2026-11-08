@@ -13,7 +13,7 @@ import { PIXEL_GIF, prepareEmail, recordEvent, markSelfView, markScheduled, runS
 import { hideTracking, sweepSentCopies } from "./sentcopy.js";
 import { queueDrafts, listQueue, cancelQueued, editQueued, sendDue } from "./sendlater.js";
 import * as views from "./views.js";
-import { prefsFor, prefsFromForm } from "./prefs.js";
+import { prefsFor, prefsFromForm, accountAllowed, trackedAccounts } from "./prefs.js";
 import { findPerson, findRecruiters, liRole } from "./finder.js";
 import { draftEmail, claudeKeyFromForm } from "./drafter.js";
 import { learnProfile } from "./learn.js";
@@ -366,7 +366,13 @@ async function handle(req, env, ctx) {
     }
     if (path === "/api/prepare" && method === "POST") {
       const data = await readBody(req);
-      const out = await prepareEmail(db, tbase, uid, data, await prefsFor(db, cfg, uid), base);
+      const prefsNow = await prefsFor(db, cfg, uid);
+      // Sent from a Gmail account that isn't this user's: send it untracked (prefs.js)
+      if (data.from && !accountAllowed(data.from, prefsNow, user, (await gmailStatus(db, uid)).email)) {
+        return json({ skipped: true, reason: "account", account: String(data.from).toLowerCase(),
+          tracked: trackedAccounts(prefsNow, user, (await gmailStatus(db, uid)).email) });
+      }
+      const out = await prepareEmail(db, tbase, uid, data, prefsNow, base);
       // Auto-try: if this goes to a guessed address, try the next ones if it bounces.
       const plan = out.id && cleanPlan(data);
       if (plan && googleEnabled(cfg) && (await gmailStatus(db, uid)).connected) {

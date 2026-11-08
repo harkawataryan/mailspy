@@ -794,6 +794,9 @@ export function settingsPage({ cfg, base, user, prefs, ip = "", notice = "", gma
       <p class="muted" style="margin:4px 0 0 26px;font-size:12.5px">When off, links are left alone unless you hover one in Gmail and switch on <b>Track clicks</b>.</p>
       <label class="chk"><input type="checkbox" name="show_automated"${prefs.show_automated ? " checked" : ""}>Show automated hits (scanners, my own views) in activity, marked "not counted"</label>
       <div class="frow" style="margin-top:14px">Ignore hits in the first <input type="number" name="prefetch_seconds" min="0" max="600" value="${prefs.prefetch_seconds}"> <span class="u">seconds after sending</span></div>
+      <label>Also track emails sent from these Gmail accounts</label>
+      <textarea class="list" name="track_accounts" placeholder="me@school.edu">${esc((prefs.track_accounts || []).join("\n"))}</textarea>
+      <div class="hint">MailSpy tracks emails you send from ${gmail.email ? `<b>${esc(gmail.email)}</b> (connected) and ` : ""}<b>${esc(user.email)}</b>. If you use another Gmail account in the same Chrome, add it here to track it too. Emails from any other account (say, someone else signed in to Gmail on your computer) send normally, without tracking. Replies, ✔✔ and the other Gmail features only work for the connected account.</div>
       <label>Don't track emails to</label>
       <textarea class="list" name="ignore_recipients" placeholder="teammate@company.com&#10;@mycompany.com">${esc(prefs.ignore_recipients.join("\n"))}</textarea>
       <div class="hint">One per line. An address, or @domain.com for everyone at that domain. These emails send without tracking.</div>

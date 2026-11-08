@@ -63,6 +63,16 @@ function findRecipient(root) {
   return span ? span.getAttribute("email") : "";
 }
 
+// The Gmail account this tab is signed in to ("Inbox - me@gmail.com - Gmail"),
+// so MailSpy only tracks emails from the user's own accounts.
+function gmailAccount() {
+  const m = document.title.match(/ - ([^\s]+@[^\s]+) - Gmail$/);
+  if (m) return m[1].toLowerCase();
+  const a = document.querySelector('a[aria-label^="Google Account:"]');
+  const m2 = a && (a.getAttribute("aria-label") || "").match(/\(([^()\s]+@[^()\s]+)\)/);
+  return m2 ? m2[1].toLowerCase() : "";
+}
+
 function findSubject(root) {
   const s = root.querySelector('input[name="subjectbox"]');
   return s ? s.value : "(no subject)";
@@ -122,12 +132,15 @@ async function trackCompose(root, opts) {
   const resp = await fetch(server.replace(/\/$/, "") + "/api/prepare", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
-    body: JSON.stringify({ to, subject, html: body.innerHTML, track_urls, untrack_urls, retry: plan || undefined })
+    body: JSON.stringify({ to, subject, from: gmailAccount(), html: body.innerHTML, track_urls, untrack_urls, retry: plan || undefined })
   });
   if (!resp.ok) { console.warn("MailSpy: prepare failed", resp.status); return true; }
   const data = await resp.json();
-  if (data.skipped) {                  // recipient is on your "don't track" list
+  if (data.skipped) {                  // recipient on your "don't track" list, or not one of your Gmail accounts
     body.setAttribute(SKIP, "1");
+    if (data.reason === "account" && mc && mc.notice) {
+      mc.notice("Sent without tracking", "MailSpy isn't on for " + data.account + ". To track it, add it in MailSpy Settings → Tracking.");
+    }
     return true;
   }
   body.innerHTML = data.html;          // tracked pixel + rewritten links

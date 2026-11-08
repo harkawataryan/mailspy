@@ -27,6 +27,7 @@ export function defaultPrefs(cfg) {
     hide_sent_pixel: true,                      // with Gmail connected: your Sent copy gets the tracking image taken out (sentcopy.js)
     notify: Object.fromEntries(NOTIFY_KINDS.map(([k]) => [k, true])),
     ignore_recipients: [],                      // "name@x.com" or "@x.com"
+    track_accounts: [],                         // other Gmail accounts (in the same Chrome) whose emails MailSpy may track
     ignore_ips: [],
     hunter_key: "",
     search_key: "",                             // optional Tavily or SerpApi key: finds people via public LinkedIn profiles
@@ -74,6 +75,7 @@ export function normalizePrefs(cfg, raw = {}) {
     notify,
     ignore_recipients: cleanList(r.ignore_recipients, 200, /^[^\s@]*@[^\s@]+\.[^\s@]+$/),
     ignore_ips: cleanList(r.ignore_ips, 50, IP_RE),
+    track_accounts: cleanList(r.track_accounts, 20, /^[^\s@]+@[^\s@]+\.[^\s@]+$/),
     hunter_key: /^[A-Za-z0-9]{20,80}$/.test(String(r.hunter_key || "").trim()) ? String(r.hunter_key).trim() : "",
     search_key: /^[A-Za-z0-9_-]{20,100}$/.test(String(r.search_key || "").trim()) ? String(r.search_key).trim() : "",
     claude_key: /^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}$/.test(String(r.claude_key || "")) ? String(r.claude_key) : "",
@@ -113,6 +115,7 @@ export function prefsFromForm(cfg, form) {
     notify,
     ignore_recipients: form.ignore_recipients,
     ignore_ips: form.ignore_ips,
+    track_accounts: form.track_accounts,
     hunter_key: form.hunter_key,
     search_key: form.search_key,
     claude_key: form.claude_key,                // already encrypted by the Settings handler (claudeKeyFromForm)
@@ -129,6 +132,18 @@ export async function prefsFor(db, cfg, userId) {
   if (!userId) return defaultPrefs(cfg);
   const row = await db.prepare("SELECT prefs FROM users WHERE id=?").bind(userId).first();
   return readPrefs(cfg, row && row.prefs);
+}
+
+// The Gmail accounts whose emails this MailSpy account tracks: the Gmail connected
+// to MailSpy, the MailSpy login email, and any the user added in Settings. Emails
+// sent from any other account open in the same Chrome (someone else's Gmail, a
+// school account) are sent without tracking, so they never land in this account.
+export function trackedAccounts(prefs, user, gmailEmail) {
+  return [...new Set([gmailEmail, user && user.email, ...(prefs.track_accounts || [])].filter(Boolean).map(s => String(s).trim().toLowerCase()))];
+}
+export function accountAllowed(from, prefs, user, gmailEmail) {
+  const f = String(from || "").trim().toLowerCase();
+  return !f || trackedAccounts(prefs, user, gmailEmail).includes(f);   // unknown (older extension): allowed
 }
 
 // Is this address on the user's "don't track" list?

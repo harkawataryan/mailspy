@@ -133,6 +133,17 @@ const t0 = now();
 const rowsAt = [{ id: 1, ts: t0 - 60 }, { id: 2, ts: t0 - 2 }, { id: 3, ts: t0 - 60 }];
 check("settling stops at the first young alert, so the cursor never skips one", JSON.stringify(T.settledAlerts(rowsAt, t0).map(a => a.id)) === "[1]", "");
 
+// ---- which Gmail account an email is sent from ----
+const me = { email: "Login@Example.com" };
+const pAcc = P.normalizePrefs(cfg, { track_accounts: ["Me@School.edu", "not an email"] });
+check("tracked: the connected Gmail, the login email, and listed accounts (case-insensitive)",
+  P.accountAllowed("aryan@gmail.com", pAcc, me, "Aryan@gmail.com") && P.accountAllowed("login@example.com", pAcc, me, "aryan@gmail.com")
+  && P.accountAllowed("me@school.edu", pAcc, me, "aryan@gmail.com"), P.trackedAccounts(pAcc, me, "aryan@gmail.com"));
+check("someone else's Gmail in the same Chrome: not tracked", !P.accountAllowed("roommate@gmail.com", pAcc, me, "aryan@gmail.com"), "");
+check("unknown account (older extension): still tracked", P.accountAllowed("", pAcc, me, "aryan@gmail.com"), "");
+check("bad entries dropped from the list", pAcc.track_accounts.length === 1, pAcc.track_accounts);
+check("settings form keeps the list", P.prefsFromForm(cfg, { track_accounts: "a@b.com\nc@d.org" }).track_accounts.length === 2, "");
+
 // ---- pages ----
 const user = { id: uid, email: "me@x.com", name: "Me", is_admin: 1 };
 const prefs = P.defaultPrefs(cfg);

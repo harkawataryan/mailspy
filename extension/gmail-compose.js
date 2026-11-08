@@ -1202,6 +1202,10 @@
           "If " + plan.cands[0] + " bounces, MailSpy sends it to the next one. You'll get a notification.", "ok");
     t.close(10000);
   }
+  // A short note in the corner (content.js: email sent untracked from another account).
+  window.__mailspyCompose.notice = function (line, sub) {
+    var t = toast(); t.set(line, sub || ""); t.close(10000);
+  };
   window.__mailspyCompose.scheduledTry = function (plan, when) {
     scheduledTry(plan, when);
     var root = null;
