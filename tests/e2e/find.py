@@ -23,7 +23,7 @@ KEY = json.loads(req("POST", "/api/login", {"email": "owner@x.example", "passwor
 s, _, b = req("GET", "/find")
 check("signed out: no Find page", s in (302, 404), s)
 s, _, b = req("GET", "/find", hdr={"Cookie": OWN})
-check("Find page loads, in the nav, with a nudge to add a key", s == 200 and 'href="/find" class="on"' in b and "free Hunter.io key" in b, s)
+check("Find page loads, in the nav, with a nudge to add a key", s == 200 and 'href="/find" class="on"' in b and "add a free search key" in b, s)
 
 s, _, b = find(OWN, mode="person", name="Jane Doe", company="Stripe")
 e = emails(b)
