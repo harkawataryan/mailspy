@@ -955,6 +955,24 @@ export function adminPage({ user, base, users, invites, notice = "", created = n
   return shell("Friends", body, "Friends", user);
 }
 
+// Emails MailSpy will send itself (sendlater.js): Gmail drafts it sends at a set time.
+export function sendLaterPage({ user, items }) {
+  const label = { queued: "Waiting", sending: "Sending…", sent: "Sent", failed: "Failed", cancelled: "Cancelled" };
+  const waiting = items.filter(i => i.state === "queued");
+  const rows = items.length ? items.map(i => `<tr class="${i.state === "cancelled" ? "dim" : ""}">
+      <td><div class="t1">${esc(i.to_addr)}</div><div class="t2">${esc(i.subject || "")}</div></td>
+      <td class="time">${when(i.send_at)}</td>
+      <td>${esc(label[i.state] || i.state)}${i.error ? `<div class="t2">${esc(i.error)}</div>` : ""}</td>
+      <td class="r">${i.state === "queued" ? `<form method="post" action="/sendlater/cancel" style="margin:0"><input type="hidden" name="id" value="${i.id}"><button class="btn sm" type="submit">Don't send</button></form>` : ""}</td></tr>`).join("")
+    : `<tr><td colspan="4"><div class="empty"><b>Nothing waiting.</b></div></td></tr>`;
+  const body = `
+  <div class="head"><div><h1>Send later</h1><div class="meta">Gmail drafts MailSpy sends for you at a set time, instead of Gmail's Schedule send. They stay in your Drafts until then, and you can still edit them there. "Don't send" leaves the draft where it is.</div></div></div>
+  <div class="panel"><div class="ph"><h2>Queue<span class="count">${waiting.length} waiting</span></h2></div>
+    <div style="overflow-x:auto"><table><thead><tr><th>To</th><th>Sends</th><th>Status</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>`;
+  return shell("Send later", body, "Emails", user);
+}
+
 export function docsPage({ user, base, docs, notice = "", created = null }) {
   const createdBox = created ? `<div class="note ok"><b>${esc(created.filename)} is ready.</b> Share this link anywhere.
       <div style="margin-top:10px">${copyField(created.url)}</div></div>` : "";

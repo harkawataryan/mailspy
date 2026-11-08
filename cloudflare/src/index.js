@@ -11,6 +11,7 @@ import { sessionUser, apiUser, checkPassword, hashPassword, makeSession, session
          loginBlocked, noteLoginFailure, newApiKey, newInviteCode } from "./auth.js";
 import { PIXEL_GIF, prepareEmail, recordEvent, markSelfView, markScheduled, runScheduled, placeOf, settledAlerts } from "./tracking.js";
 import { hideTracking, sweepSentCopies } from "./sentcopy.js";
+import { queueDrafts, listQueue, cancelQueued, editQueued, sendDue } from "./sendlater.js";
 import * as views from "./views.js";
 import { prefsFor, prefsFromForm } from "./prefs.js";
 import { findPerson, findRecruiters, liRole } from "./finder.js";
@@ -396,6 +397,20 @@ async function handle(req, env, ctx) {
       const out = await uploadDoc(env, tbase, uid, name, await req.arrayBuffer());
       return json(out, out.error ? 400 : 200);
     }
+    // Send later by MailSpy (sendlater.js): queue Gmail drafts, edit them, see the queue
+    if (path === "/api/sendlater" && method === "GET") return json(await listQueue(db, uid));
+    if (path === "/api/sendlater/queue" && method === "POST") {
+      const b = await readBody(req);
+      return json(await queueDrafts(env, cfg, uid, Array.isArray(b.to) ? b.to : [], Number(b.at)));
+    }
+    if (path === "/api/sendlater/edit" && method === "POST") {
+      const b = await readBody(req);
+      return json(await editQueued(env, cfg, uid, b.replace, Number(b.after) || 0));
+    }
+    if (path === "/api/sendlater/cancel" && method === "POST") {
+      const b = await readBody(req);
+      return json(await cancelQueued(db, uid, (Array.isArray(b.ids) ? b.ids : []).map(Number)));
+    }
     if (path === "/api/scheduled" && method === "POST") {
       const body = await readBody(req);
       return json({ ok: await markScheduled(db, uid, String(body.token || ""), body.at) });
@@ -597,6 +612,23 @@ async function handle(req, env, ctx) {
   }
 
   // ---- people and companies ----
+  if (path === "/sendlater" && method === "GET") return html(views.sendLaterPage({ user, items: await listQueue(db, uid) }));
+  // the same actions for the signed-in page (JSON, same-origin only)
+  if (path === "/sendlater/queue" && method === "POST") {
+    const b = await readBody(req);
+    return json(await queueDrafts(env, cfg, uid, Array.isArray(b.to) ? b.to : [], Number(b.at)));
+  }
+  if (path === "/sendlater/edit" && method === "POST") {
+    const b = await readBody(req);
+    return json(await editQueued(env, cfg, uid, b.replace, Number(b.after) || 0));
+  }
+  if (path === "/sendlater.json" && method === "GET") return json(await listQueue(db, uid));
+  if (path === "/sendlater/cancel" && method === "POST") {
+    const f = await readBody(req);
+    await cancelQueued(db, uid, [Number(f.id)]);
+    return redirect("/sendlater");
+  }
+
   if ((path === "/people" || path === "/companies") && method === "GET") {
     const people = await loadPeople(db, uid);
     const names = await companyNames(env, people.filter(p => !p.personal).map(p => p.org));
@@ -870,5 +902,7 @@ export default {
     ctx.waitUntil(sweepLabels(env, cfg).catch(err => console.error("label sweep:", err))
       .then(() => sweepSentCopies(env, cfg)).catch(err => console.error("sent copy sweep:", err)));
     ctx.waitUntil(sweepRetries(env, cfg).catch(err => console.error("auto-try sweep:", err)));
+    // Emails MailSpy sends for you at a set time (sendlater.js)
+    ctx.waitUntil(sendDue(env, cfg).catch(err => console.error("send later:", err)));
   },
 };

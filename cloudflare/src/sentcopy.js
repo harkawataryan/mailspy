@@ -51,8 +51,8 @@ const DAYS = 14;            // the sweep looks at emails sent in the last two we
 const DROP_LABELS = new Set(["DRAFT", "TRASH", "SPAM", "CHAT"]);
 
 // ------------------------------------------------------------------ raw mail
-const b64urlToBin = s => atob(s.replace(/-/g, "+").replace(/_/g, "/"));
-const binToB64url = s => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+export const b64urlToBin = s => atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+export const binToB64url = s => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function header(head, name) {
@@ -90,8 +90,9 @@ function splitEntity(entity, NL) {
   return i < 0 ? [entity, "", null] : [entity.slice(0, i), NL + NL, entity.slice(i + 2 * NL.length)];
 }
 
-// Rewrite the text/html parts of an entity with strip(); null if nothing changed.
-function rewrite(entity, NL, strip, depth = 0) {
+// Rewrite the text parts of an entity with strip(text, type); null if nothing changed.
+// types: which parts (text/html by default; sendlater.js also edits text/plain).
+export function rewrite(entity, NL, strip, depth = 0, types = ["text/html"]) {
   const [head, sep, body] = splitEntity(entity, NL);
   if (body === null || depth > 12) return null;
   const ct = header(head, "Content-Type");
@@ -107,13 +108,13 @@ function rewrite(entity, NL, strip, depth = 0) {
       if (c.startsWith("--")) break;                       // closing delimiter, then the epilogue
       const k = c.indexOf(NL);
       if (k < 0) continue;
-      const out = rewrite(c.slice(k + NL.length), NL, strip, depth + 1);
+      const out = rewrite(c.slice(k + NL.length), NL, strip, depth + 1, types);
       if (out !== null) { chunks[j] = c.slice(0, k + NL.length) + out; changed = true; }
     }
     return changed ? head + sep + chunks.join(delim).slice(NL.length) : null;
   }
   // Only the message's own HTML; attached .html files and forwarded messages are left alone.
-  if (type !== "text/html" || /^\s*attachment/i.test(header(head, "Content-Disposition"))) return null;
+  if (!types.includes(type) || /^\s*attachment/i.test(header(head, "Content-Disposition"))) return null;
   const cte = header(head, "Content-Transfer-Encoding").toLowerCase();
   const tail = (body.match(/(?:\r?\n)*$/) || [""])[0];
   const core = body.slice(0, body.length - tail.length);
@@ -121,7 +122,7 @@ function rewrite(entity, NL, strip, depth = 0) {
   if (cte === "base64") text = atob(core.replace(/[^A-Za-z0-9+/=]/g, ""));
   else if (cte === "quoted-printable") text = qpDecode(core);
   else text = core;
-  const out = strip(text);
+  const out = strip(text, type);
   if (out === text) return null;
   const enc = cte === "base64" ? b64wrap(btoa(out), NL) : cte === "quoted-printable" ? qpEncode(out, NL) : out;
   return head + sep + enc + tail;

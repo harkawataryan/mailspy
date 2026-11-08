@@ -12,11 +12,13 @@
 //       (hook replaces the second sentence when given)
 //   { replace: [[from, to], ...] }  plain text replacements inside the body
 // Every spec may add expect: "text the old body must contain" (safety check).
+// localStorage mse_global = [[from, to], ...] is applied to every email in the run;
+// an email with no spec gets only those.
 //
 // Safety: never clicks Send; checks the recipient and the PDF attachment before
 // editing; stops an email (left as a draft, nothing sent) on anything unexpected.
 (function () {
-  const Q = "mse_queue", R = "mse_results", S = "mse_specs", WHEN = "mse_when";
+  const Q = "mse_queue", R = "mse_results", S = "mse_specs", WHEN = "mse_when", G = "mse_global";
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const vis = el => el && el.offsetParent !== null;
   async function until(fn, ms = 12000) { const t = Date.now(); while (Date.now() - t < ms) { const v = fn(); if (v) return v; await sleep(200); } return null; }
@@ -42,7 +44,7 @@
     }
     const link = box.querySelector("a") ? box.querySelector("a") : Object.assign(document.createElement("a"), { href: "https://aryanh.dev", textContent: "aryanh.dev" });
     const keep = [...box.querySelectorAll("img")];
-    const opener = spec.hook || `I wanted to reach out early to express interest in a Summer 2027 software engineering internship at ${spec.co}.`;
+    const opener = spec.hook || `I wanted to reach out early to express interest in a Summer 2027 internship at ${spec.co}.`;
     const para = `I'm Aryan, a junior studying CS at UT Austin. ${opener} ${STRIPE} ${spec.rest} I've attached my resume (or check out my portfolio at `;
     const tail = ") and would greatly appreciate it if you could get my profile in front of the right person.";
     while (box.firstChild) box.removeChild(box.firstChild);
@@ -80,7 +82,13 @@
   }
 
   async function finish(email, spec, whenText) {
-    const body = await until(() => [...document.querySelectorAll('div[aria-label="Message Body"]')].find(vis));
+    const findBody = () => [...document.querySelectorAll('div[aria-label="Message Body"]')].find(vis);
+    let body = await until(findBody, 5000);
+    if (!body) {
+      // drafts sometimes open minimized: click the title bar to expand
+      const bar = [...document.querySelectorAll('[role=dialog] .aYF')].find(vis);
+      if (bar) { press(bar); body = await until(findBody, 6000); }
+    }
     if (!body) return { step: "compose didn't open (now a draft)" };
     const dlg = body.closest("[role=dialog]");
     if (!dlg) return { step: "compose dialog not found (draft open)" };
@@ -95,7 +103,13 @@
       if (edit !== "ok" && edit !== "already") return { step: `edit: ${edit} (draft open)` };
       body.setAttribute("data-se-edited", "1");
     }
-    const mt = [...body.querySelectorAll("img")].filter(i => /mailtrack\.io/i.test(i.getAttribute("src") || ""));
+    // replacements applied to every email in the run (mse_global: [[from, to], ...])
+    let global = 0;
+    for (const [from, to] of get(G) || []) {
+      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+      for (let n; (n = walker.nextNode());) if (n.nodeValue.includes(from)) { n.nodeValue = n.nodeValue.split(from).join(to); global++; }
+    }
+    const mt =[...body.querySelectorAll("img")].filter(i => /mailtrack\.io/i.test(i.getAttribute("src") || ""));
     mt.forEach(i => i.remove());
     body.dispatchEvent(new Event("input", { bubbles: true }));
     await sleep(400);
@@ -124,7 +138,7 @@
     if (!last) return { step: `no 'Last scheduled time ${whenText}' option (dialog open)` };
     press(last);
     const done = await until(() => !vis(body) && [...document.querySelectorAll("*")].find(e => vis(e) && e.children.length <= 4 && /^Send scheduled for/i.test(e.textContent.trim())), 10000);
-    return done ? { ok: true, edit, mailtrackRemoved: mt.length } : { step: "no confirmation" };
+    return done ? { ok: true, edit, global, mailtrackRemoved: mt.length } : { step: "no confirmation" };
   }
 
   async function one(email) {
