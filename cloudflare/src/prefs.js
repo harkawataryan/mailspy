@@ -25,6 +25,9 @@ export function defaultPrefs(cfg) {
     allow_downloads: true,
     pdf_tiles: false,                           // on: PDFs attached in Gmail are sent as tracked link tiles; off: normal attachments
     hide_sent_pixel: true,                      // with Gmail connected: your Sent copy gets the tracking image taken out (sentcopy.js)
+    btn_find: true,                             // Gmail compose: "Find email" link next to Cc/Bcc
+    btn_templates: true,                        // Gmail compose: Templates button next to Send
+    btn_draft: true,                            // Gmail compose: AI Draft button next to Send
     notify: Object.fromEntries(NOTIFY_KINDS.map(([k]) => [k, true])),
     ignore_recipients: [],                      // "name@x.com" or "@x.com"
     track_accounts: [],                         // other Gmail accounts (in the same Chrome) whose emails MailSpy may track
@@ -72,6 +75,9 @@ export function normalizePrefs(cfg, raw = {}) {
     allow_downloads: bool(r.allow_downloads, d.allow_downloads),
     pdf_tiles: bool(r.pdf_tiles, d.pdf_tiles),
     hide_sent_pixel: bool(r.hide_sent_pixel, d.hide_sent_pixel),
+    btn_find: bool(r.btn_find, d.btn_find),
+    btn_templates: bool(r.btn_templates, d.btn_templates),
+    btn_draft: bool(r.btn_draft, d.btn_draft),
     notify,
     ignore_recipients: cleanList(r.ignore_recipients, 200, /^[^\s@]*@[^\s@]+\.[^\s@]+$/),
     ignore_ips: cleanList(r.ignore_ips, 50, IP_RE),
@@ -112,6 +118,9 @@ export function prefsFromForm(cfg, form) {
     allow_downloads: form.allow_downloads === "on",
     pdf_tiles: form.pdf_tiles === "on",
     hide_sent_pixel: form.hide_sent_pixel === "on",
+    btn_find: form.btn_find === "on",
+    btn_templates: form.btn_templates === "on",
+    btn_draft: form.btn_draft === "on",
     notify,
     ignore_recipients: form.ignore_recipients,
     ignore_ips: form.ignore_ips,

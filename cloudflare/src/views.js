@@ -756,7 +756,13 @@ export function settingsPage({ cfg, base, user, prefs, ip = "", notice = "", gma
 
   <div class="sect"><div><h3>Chrome extension</h3><p class="d">Tracks the emails you send from Gmail.</p></div>
     <div class="body">
-      ${cfg.extensionUrl ? `<p style="margin:0 0 12px"><a class="btn primary" href="${esc(cfg.extensionUrl)}" target="_blank" rel="noreferrer">Add to Chrome</a></p>` : ""}
+      ${cfg.extensionUrl ? `<p style="margin:0 0 12px"><a class="btn primary" href="${esc(cfg.extensionUrl)}" target="_blank" rel="noreferrer">Add to Chrome</a></p>` : `
+      <p style="margin:0 0 12px"><a class="btn primary" href="/extension.zip" download>Download the extension</a> <span class="muted" style="font-size:12.5px">version ${esc(cfg.extensionVersion || "")}</span></p>
+      <ol class="muted" style="margin:0 0 12px 18px;padding:0;font-size:13.5px;line-height:1.6">
+        <li>Unzip it. You get a <b style="color:var(--text)">mailspy-extension</b> folder; keep it somewhere it won't be deleted.</li>
+        <li>Open <b style="color:var(--text)">chrome://extensions</b>, turn on <b style="color:var(--text)">Developer mode</b> (top right), click <b style="color:var(--text)">Load unpacked</b> and pick that folder.</li>
+        <li>When the MailSpy icon shows <b style="color:var(--text)">NEW</b>, download it again, replace the folder's files, and click the reload arrow on MailSpy in chrome://extensions.</li>
+      </ol>`}
       <p class="muted" style="margin:0;font-size:13.5px">After installing, click the MailSpy icon in Chrome's toolbar and sign in as <b style="color:var(--text)">${esc(user.email)}</b>.</p>
     </div></div>
 
@@ -803,6 +809,14 @@ export function settingsPage({ cfg, base, user, prefs, ip = "", notice = "", gma
       <label>Ignore activity from these IP addresses</label>
       <textarea class="list" name="ignore_ips" placeholder="203.0.113.7">${esc(prefs.ignore_ips.join("\n"))}</textarea>
       <div class="hint">${ip ? `Your current IP address is <code>${esc(ip)}</code>. ` : ""}Opens and clicks from these addresses aren't recorded.</div>
+    </div></div>
+
+  <div class="sect"><div><h3>Gmail compose buttons</h3><p class="d">What MailSpy adds to Gmail's compose window. Turn off any you don't use.</p></div>
+    <div class="body">
+      <label class="chk"><input type="checkbox" name="btn_find"${prefs.btn_find ? " checked" : ""}>"Find email" next to Cc and Bcc</label>
+      <label class="chk"><input type="checkbox" name="btn_templates"${prefs.btn_templates ? " checked" : ""}>Templates button next to Send</label>
+      <label class="chk"><input type="checkbox" name="btn_draft"${prefs.btn_draft ? " checked" : ""}>Draft button (AI drafter) next to Send</label>
+      <div class="hint">Changes show up in Gmail within a few seconds; no reload needed. Tracking works the same either way.</div>
     </div></div>
 
   <div class="sect"><div><h3>Documents</h3><p class="d">Tracked PDFs you share. See your <a class="link" href="/docs">documents</a> and <a class="link" href="/links">short links</a>.</p></div>

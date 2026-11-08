@@ -39,3 +39,9 @@ FOLLOWUP_HOURS = "48"        # unopened after this long = follow-up reminder
 IGNORE_IPS = ""              # comma-separated IPs to ignore (e.g. your own)
 EXTENSION_URL = ""           # Chrome Web Store link for the extension, once it's published
 CONTACT_EMAIL = ""           # contact address shown in the privacy policy
+
+# The extension zip friends download (built by scripts/bump-extension.mjs before each deploy)
+[[rules]]
+type = "Data"
+globs = ["**/*.zip"]
+fallthrough = true

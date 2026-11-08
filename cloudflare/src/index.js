@@ -44,6 +44,7 @@ const ACTIVITY_SQL = `SELECT * FROM (
     FROM tlink_clicks c JOIN tlinks l ON l.id=c.tlink_id WHERE l.user_id=?1
 ) ORDER BY ts DESC LIMIT ?2`;
 import manifest from "../../extension/manifest.json";
+import extensionZip from "../build/extension.zip";   // built by scripts/bump-extension.mjs
 
 // An activity row as the extension gets it: location shown as "via Gmail" for
 // proxy fetches, and no user agent.
@@ -76,6 +77,7 @@ async function handle(req, env, ctx) {
   const path = url.pathname;
   const method = req.method;
   const cfg = settings(env);
+  cfg.extensionVersion = manifest.version;
   const base = cfg.baseUrl || url.origin;
   const tbase = cfg.trackUrl || base;  // address used in emails and shared links
   const db = env.DB;
@@ -362,7 +364,8 @@ async function handle(req, env, ctx) {
     if (path === "/api/me") {
       const prefs = await prefsFor(db, cfg, uid);
       const gm = googleEnabled(cfg) ? await gmailStatus(db, uid) : { connected: false };
-      return json({ email: user.email, name: user.name, notify: prefs.notify, track_all_links: prefs.track_all_links, pdf_tiles: prefs.pdf_tiles, gmail: gm.connected, ai: !!prefs.claude_key });
+      return json({ email: user.email, name: user.name, notify: prefs.notify, track_all_links: prefs.track_all_links, pdf_tiles: prefs.pdf_tiles, gmail: gm.connected, ai: !!prefs.claude_key,
+        buttons: { find: prefs.btn_find, templates: prefs.btn_templates, draft: prefs.btn_draft } });
     }
     if (path === "/api/prepare" && method === "POST") {
       const data = await readBody(req);
@@ -618,6 +621,14 @@ async function handle(req, env, ctx) {
   }
 
   // ---- people and companies ----
+  // The Chrome extension, for friends to install (Load unpacked) until it's on the Web Store
+  if (path === "/extension.zip" && method === "GET") {
+    return new Response(extensionZip, { headers: {
+      "Content-Type": "application/zip",
+      "Content-Disposition": `attachment; filename="mailspy-extension-${manifest.version}.zip"`,
+      "Cache-Control": "no-store" } });
+  }
+
   if (path === "/sendlater" && method === "GET") return html(views.sendLaterPage({ user, items: await listQueue(db, uid) }));
   // the same actions for the signed-in page (JSON, same-origin only)
   if (path === "/sendlater/queue" && method === "POST") {

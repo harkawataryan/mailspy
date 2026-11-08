@@ -49,3 +49,9 @@ if (hash === last) {
   writeFileSync(stampPath, hash + "\n");
   console.log("extension changed; version bumped to", m.version, "(Chrome will reload it within 30s of deploy)");
 }
+
+// The download friends install from (/extension.zip), built from the final files.
+import("./zip-extension.mjs").then(({ writeExtensionZip }) => {
+  const r = writeExtensionZip(extDir, join(here, "..", "build"));
+  console.log(`extension.zip for download: ${r.files} files, ${Math.round(r.bytes / 1024)} KB`);
+});

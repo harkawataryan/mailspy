@@ -113,7 +113,14 @@ async function checkVersion() {
   } else {
     // Unpacked: the folder already has the new files. Reload once per version.
     const { reloadedFor } = await chrome.storage.local.get("reloadedFor");
-    if (reloadedFor === version) return;
+    if (reloadedFor === version) {
+      // Reloaded and still older: this copy's files didn't change (a downloaded
+      // copy, not the developer's folder). Ask for the new download.
+      chrome.action.setBadgeBackgroundColor({ color: "#1a73e8" });
+      chrome.action.setBadgeText({ text: "NEW" });
+      chrome.action.setTitle({ title: `MailSpy ${version} is out. Download it in MailSpy Settings → Chrome extension.` });
+      return;
+    }
     await chrome.storage.local.set({ reloadedFor: version });
     chrome.runtime.reload();
   }

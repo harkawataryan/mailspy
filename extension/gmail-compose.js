@@ -1233,7 +1233,27 @@
   var OURS = [SERVER, "https://go.aryanh.dev"];
   var trackAll = false;
 
-  (async function loadPref() {
+  // Settings > Gmail compose buttons: hide the ones you turned off. The last
+  // choice is remembered so they don't flash in while Gmail loads, and it's
+  // checked again whenever you come back to this tab.
+  document.querySelectorAll("style.mailspy-btn-style").forEach(function (n) { n.remove(); });
+  var btnStyle = document.createElement("style");
+  btnStyle.className = "mailspy-btn-style";
+  document.head.appendChild(btnStyle);
+  function applyButtons(b) {
+    b = b || {};
+    var css = "";
+    if (b.find === false) css += ".mailspy-find-host,.mailspy-find-hint,.mailspy-find-pop{display:none!important}";
+    if (b.templates === false) css += ".mailspy-tpl-host,.mailspy-tpl-pop{display:none!important}";
+    if (b.draft === false) css += ".mailspy-ai-host,.mailspy-ai-pop{display:none!important}";
+    btnStyle.textContent = css;
+  }
+  chrome.storage.local.get(["composeButtons"]).then(function (s) { applyButtons(s.composeButtons); }).catch(function () {});
+
+  var prefAt = 0;
+  async function loadPref() {
+    if (!alive() || Date.now() - prefAt < 5000) return;
+    prefAt = Date.now();
     try {
       var s = await chrome.storage.local.get(["apiKey"]);
       if (!s.apiKey) return;
@@ -1242,10 +1262,14 @@
         var me = await r.json();
         trackAll = !!me.track_all_links;
         pdfTilesOn = me.pdf_tiles === true;
+        if (me.buttons) { applyButtons(me.buttons); chrome.storage.local.set({ composeButtons: me.buttons }); }
         scanChips();
       }
     } catch (e) {}
-  })();
+  }
+  loadPref();
+  window.addEventListener("focus", loadPref);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) loadPref(); });
 
   // A dotted underline and a small arrow mark tracked links while you write.
   // This stylesheet lives in Gmail's page, not in the email, so none of it is sent.
@@ -1449,7 +1473,7 @@
   var timer = setInterval(function () {
     if (!alive()) {
       clearInterval(timer);
-      document.querySelectorAll(".mailspy-pdf-host, .mailspy-tpl-host, .mailspy-tpl-pop, .mailspy-ai-host, .mailspy-ai-pop, .mailspy-link-pill, .mailspy-chip-host, .mailspy-find-host, .mailspy-find-pop, .mailspy-find-hint, .mailspy-finder, .mailspy-try-host, style.mailspy-link-style").forEach(function (n) { n.remove(); });
+      document.querySelectorAll(".mailspy-pdf-host, .mailspy-tpl-host, .mailspy-tpl-pop, .mailspy-ai-host, .mailspy-ai-pop, .mailspy-link-pill, .mailspy-chip-host, .mailspy-find-host, .mailspy-find-pop, .mailspy-find-hint, .mailspy-finder, .mailspy-try-host, style.mailspy-link-style, style.mailspy-btn-style").forEach(function (n) { n.remove(); });
       return;
     }
     scan();
