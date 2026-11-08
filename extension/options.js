@@ -110,6 +110,15 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 $("out").addEventListener("click", async () => { await signOut(); render(); });
+// Switching servers means a different account, so sign out and show the server box.
+$("change").addEventListener("click", async (ev) => {
+  ev.preventDefault();
+  if (!confirm("Switching to a different MailSpy server signs you out of " + host(MAILSPY_APP) + ". Continue?")) return;
+  await signOut();
+  await render();
+  $("srvBox").open = true;
+  $("server").focus();
+});
 $("dash").addEventListener("click", () => chrome.tabs.create({ url: SERVER + "/emailtrack" }));
 
 MAILSPY_READY.then(() => { showServer(); render(); });
