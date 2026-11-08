@@ -545,9 +545,7 @@ const keyOf = name => (splitName(name) || {}).first + " " + (splitName(name) || 
 // key (Tavily or SerpApi, both have free plans), MailSpy asks a search engine
 // for public LinkedIn profiles of recruiters at the company and reads the
 // result titles ("Jane Doe - Technical Recruiter - Stripe | LinkedIn").
-// MailSpy never opens LinkedIn itself. One search per company, saved for two weeks.
-
-const LI_TTL = 14 * 86400;
+// MailSpy never opens LinkedIn itself. Results go into a shared index (below).
 
 async function searchWeb(key, query) {
   if (/^tvly-/i.test(key)) {
@@ -598,35 +596,93 @@ function worksThere(text, org, domain) {
   return !names.some(n => new RegExp(`\\b(ex-?|former(?:ly)?(?: at)?|previously(?: at)?|alum(?:na|nus|ni)? of)\\s*${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i").test(t));
 }
 
-export async function linkedinPeople(env, key, org, domain) {
-  if (!key || !org) return { list: [] };
-  return cached(env, `find:li:v1:${org.toLowerCase()}|${domain}`, async () => {
-    const q = `site:linkedin.com/in ("recruiter" OR "talent acquisition" OR "sourcer" OR "talent partner" OR "recruiting") "${org}"`;
-    const res = await searchWeb(key, /^tvly-/i.test(key) ? `${org} recruiter OR "talent acquisition" OR sourcer OR "recruiting" LinkedIn` : q);
-    if (res.error) return { list: [], error: res.error };
-    const list = [];
-    const seen = new Set();
-    for (const x of res.results) {
-      if (!/linkedin\.com\/in\//i.test(x.url)) continue;
-      const p = parseProfileTitle(x.title);
-      if (!p) continue;
-      const about = `${p.company} ${p.position} ${x.snippet}`;
-      if (!worksThere(p.company || about, org, domain) && !worksThere(about, org, domain)) continue;
-      const k = p.name.toLowerCase();
-      if (seen.has(k)) continue;
-      seen.add(k);
-      let position = p.position;
-      if (!position || position.toLowerCase() === org.toLowerCase()) {
-        const m = x.snippet.match(/\b((?:senior |lead |technical |university |campus |executive |principal |staff )*(?:recruiter|sourcer|talent (?:acquisition|partner)[\w ]*|recruiting (?:coordinator|manager|lead)))\b/i);
-        position = m ? m[1].replace(/\s+(?:at|@|in|with)\s+.*$/i, "").trim().replace(/\b\w/g, c => c.toUpperCase()) : "";
-      }
-      list.push({ name: p.name, position, linkedin: x.url.split("?")[0] });
-    }
-    return { list: list.slice(0, 15) };
-  }, LI_TTL);
+// ---- the shared index
+// One search's results help everyone: they go into an index shared by all
+// MailSpy accounts, keyed by the company's domain. When the index already has
+// a good list for a company (several current recruiters), nobody's search key
+// is used again for 90 days. A thin list is kept to build on, but never
+// counts as done: the next person with a key searches again and adds to it.
+// Anyone can ask for a new search anyway ("both" adds to the index's list,
+// "fresh" shows only the new results).
+const LI_DONE = 90 * 86400;     // a good list is trusted this long
+const LI_FORGET = 365 * 86400;  // people not seen in a search for a year are dropped
+const LI_MAX = 40;
+
+export function liGood(people) {
+  const rec = people.filter(p => RECRUIT_RE.test(p.position || "")).length;
+  return rec >= 3 || (people.length >= 5 && rec >= 1);
 }
 
-export async function findPeople(env, prefs, company) {
+export function liMerge(old, found, now) {
+  const by = new Map();
+  for (const p of old || []) if (now - (p.seen || 0) < LI_FORGET) by.set(keyOf(p.name), { ...p });
+  for (const p of found) {
+    const k = keyOf(p.name), prev = by.get(k);
+    // the newer title wins: people change roles
+    by.set(k, { name: p.name, position: p.position || (prev && prev.position) || "", linkedin: p.linkedin || (prev && prev.linkedin) || "", seen: now });
+  }
+  const rec = p => RECRUIT_RE.test(p.position || "") ? 1 : 0;
+  return [...by.values()].sort((a, b) => rec(b) - rec(a) || b.seen - a.seen).slice(0, LI_MAX);
+}
+
+// mode: "auto" (index when it's good, otherwise search), "both", or "fresh"
+export async function linkedinPeople(env, key, org, domain, mode = "auto") {
+  if (!org || !domain) return { list: [] };
+  const k = `find:li:v2:${domain.toLowerCase()}`;
+  const now = Math.floor(Date.now() / 1000);
+  const idx = env.DOCS ? await env.DOCS.get(k, { type: "json" }).catch(() => null) : null;
+  const have = idx && (idx.people || []).length ? idx : null;
+  const info = from => ({ from, count: 0, updated: have ? have.updated : now, good: !!(have && have.good), canSearch: !!key });
+  const fromIndex = extra => ({ list: have.people, info: { ...info("index"), count: have.people.length }, ...extra });
+
+  if (mode !== "both" && mode !== "fresh" && have) {
+    if (have.good && now - have.updated < LI_DONE) return fromIndex();
+    if (!key) return fromIndex();             // thin, but better than nothing
+  }
+  if (!key) return have ? fromIndex({ error: "Add a search key in Settings to search again." }) : { list: [] };
+
+  const res = await liSearch(key, org, domain);
+  if (res.error) return have ? fromIndex({ error: res.error }) : { list: [], error: res.error };
+
+  const merged = liMerge(have && have.people, res.list, now);
+  const good = liGood(merged);
+  // never store an empty search; a thin list is stored to build on but isn't "done"
+  if (env.DOCS && merged.length && (res.list.length || have)) {
+    await env.DOCS.put(k, JSON.stringify({ people: merged, good, updated: res.list.length ? now : (have ? have.updated : now), searched: now }),
+      { expirationTtl: LI_FORGET }).catch(() => {});
+  }
+  if (mode === "fresh") return { list: res.list, info: { ...info("search"), count: res.list.length, updated: now, good: liGood(res.list) } };
+  return { list: merged, info: { ...info(have ? "index+search" : "search"), count: merged.length, updated: now, good } };
+}
+
+async function liSearch(key, org, domain) {
+  const q = `site:linkedin.com/in ("recruiter" OR "talent acquisition" OR "sourcer" OR "talent partner" OR "recruiting") "${org}"`;
+  const res = await searchWeb(key, /^tvly-/i.test(key) ? `${org} recruiter OR "talent acquisition" OR sourcer OR "recruiting" LinkedIn` : q);
+  if (res.error) return { list: [], error: res.error };
+  const list = [];
+  const seen = new Set();
+  for (const x of res.results) {
+    if (!/linkedin\.com\/in\//i.test(x.url)) continue;
+    const p = parseProfileTitle(x.title);
+    if (!p) continue;
+    const about = `${p.company} ${p.position} ${x.snippet}`;
+    if (!worksThere(p.company || about, org, domain) && !worksThere(about, org, domain)) continue;
+    const k = p.name.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    let position = p.position;
+    if (!position || position.toLowerCase() === org.toLowerCase()) {
+      const m = x.snippet.match(/\b((?:senior |lead |technical |university |campus |executive |principal |staff )*(?:recruiter|sourcer|talent (?:acquisition|partner)[\w ]*|recruiting (?:coordinator|manager|lead)))\b/i);
+      position = m ? m[1].replace(/\s+(?:at|@|in|with)\s+.*$/i, "").trim().replace(/\b\w/g, c => c.toUpperCase()) : "";
+    }
+    // "Recruiting @ Figma" -> "Recruiting"
+    position = position.replace(new RegExp(`\\s+(?:at|@)\\s+${org.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*$`, "i"), "").trim();
+    list.push({ name: p.name, position, linkedin: x.url.split("?")[0] });
+  }
+  return { list: list.slice(0, 15) };
+}
+
+export async function findPeople(env, prefs, company, opts = {}) {
   if (!String(company || "").trim()) return { error: "Enter the company name or website." };
   const out = { mode: "recruiters", query: { company }, people: [], groups: [], guesses: [], notes: [], published: [], links: [] };
   const domainIn = asDomain(company);
@@ -665,8 +721,9 @@ export async function findPeople(env, prefs, company) {
   if (!out.organization) out.organization = org;
 
   const [ev, team, wd, li] = await Promise.all([evidenceFor(env, out.domain), fromTeamPages(env, out.domain, org), wikidataPeople(env, wid),
-    linkedinPeople(env, prefs.search_key, org, out.domain)]);
+    linkedinPeople(env, prefs.search_key, org, out.domain, opts.li)]);
   if (li.error) out.notes.push(li.error);
+  if (li.info) out.li = li.info;
   for (const p of li.list) all.push({ name: p.name, position: p.position, source: "LinkedIn", linkedin: p.linkedin });
   for (const p of team.list) all.push({ name: p.name, position: p.position, source: "their website", where: p.where });
   for (const p of wd) all.push({ name: p.name, position: p.position, source: "Wikidata" });

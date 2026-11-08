@@ -47,6 +47,8 @@
     .body { overflow-y: auto; padding: 4px 0 6px; flex: 1; }
     .msg { padding: 10px 14px; color: #5f6368; }
     .meta { padding: 8px 14px 2px; color: #5f6368; font-size: 12px; }
+    .meta a.again { color: #1a73e8; text-decoration: none; white-space: nowrap; }
+    .meta a.again:hover { text-decoration: underline; }
     .meta b { color: #1f1f1f; font-weight: 500; }
     .h { padding: 10px 14px 4px; font-size: 11px; font-weight: 500; letter-spacing: .4px; text-transform: uppercase; color: #5f6368; }
     .it { display: flex; align-items: center; gap: 8px; padding: 7px 10px 7px 14px; cursor: pointer; }
@@ -200,13 +202,16 @@
       } catch (e) { return { error: "Couldn't reach MailSpy. Check your connection." }; }
     }
 
-    async function search() {
+    // li: how MailSpy's shared LinkedIn index is used ("both" = search again and add, "fresh" = new search only)
+    async function search(li) {
       var name = nameIn.value.trim(), company = coIn.value.trim();
       if (!company || (mode === "person" && !name)) { (company ? nameIn : coIn).focus(); return; }
       go.disabled = true;
       body.innerHTML = '<div class="msg">Searching… a company\'s first search takes a few seconds.</div>';
       full.href = SERVER + "/find?" + new URLSearchParams({ mode: mode, name: name, company: company });
-      var d = await apiFind({ mode: mode, name: name, company: company });
+      var params = { mode: mode, name: name, company: company };
+      if (typeof li === "string") params.li = li;
+      var d = await apiFind(params);
       go.disabled = false;
       if (d.error) { body.innerHTML = '<div class="msg">' + esc(d.error) + "</div>"; return; }
       if (mode === "person") renderPerson(body, d, name, true);
@@ -308,12 +313,30 @@
       }
     }
 
+    // Where the LinkedIn people came from: MailSpy's shared index (no search credits) or a new search
+    function liSummary(li) {
+      if (!li || (!li.count && li.from === "index")) return null;
+      var n = li.count + (li.count === 1 ? " person" : " people");
+      var s = Math.max(0, Date.now() / 1000 - (li.updated || 0));
+      var ago = s < 120 ? "just now" : s < 7200 ? Math.round(s / 60) + " min ago" : s < 172800 ? Math.round(s / 3600) + " hours ago" : Math.round(s / 86400) + " days ago";
+      if (li.from === "index") return {
+        text: li.good ? "LinkedIn: " + n + " from MailSpy's shared index, updated " + ago + ". No search credits used."
+          : "LinkedIn: " + n + " from MailSpy's shared index so far." + (li.canSearch ? "" : " Add a search key in Settings to look for more."),
+        again: li.canSearch };
+      if (li.from === "index+search") return { text: "LinkedIn: searched again and added to MailSpy's shared index, " + n + " in all.", again: false };
+      if (li.from === "search") return { text: "LinkedIn: " + n + " from a new search" + (li.count ? ", saved in MailSpy's shared index" : "") + ".", again: false };
+      return null;
+    }
+
     // People at a company: names and roles by group; click one for their address.
     function renderPeople(d) {
       var html = "";
       if (d.domain) html += '<div class="meta"><b>' + esc(d.organization || d.domain) + "</b> · " + esc(d.domain) +
         (d.pattern ? " · usually " + esc(d.pattern.example) : "") + "</div>";
       (d.notes || []).forEach(function (n) { html += '<div class="meta">' + esc(n) + "</div>"; });
+      var lis = liSummary(d.li);
+      if (lis) html += '<div class="meta lix">' + esc(lis.text) + (lis.again
+        ? ' <a class="again" data-li="both" href="#">Search again, add to these</a> · <a class="again" data-li="fresh" href="#">New search only</a>' : "") + "</div>";
       var people = [];
       (d.groups || []).forEach(function (g) {
         html += '<div class="h">' + esc(g.label) + "</div>";
@@ -336,6 +359,9 @@
       if (inboxes.length) html += '<details class="inb"><summary>Shared inboxes (careers@, jobs@…)</summary>' + inboxes.join("") + "</details>";
       body.innerHTML = html || '<div class="msg">Nothing found.</div>';
       wireRows(body);
+      body.querySelectorAll("a.again").forEach(function (a) {
+        a.addEventListener("click", function (e) { e.preventDefault(); search(a.getAttribute("data-li")); });
+      });
 
       body.querySelectorAll(".pp").forEach(function (pp) {
         var p = people[+pp.getAttribute("data-i")], px = pp.querySelector(".px"), pf = pp.querySelector(".pf"), loaded = false;

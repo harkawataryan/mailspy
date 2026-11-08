@@ -412,9 +412,9 @@ async function handle(req, env, ctx) {
       const prefs = await prefsFor(db, cfg, uid);
       const q = Object.fromEntries(url.searchParams);
       const name = String(q.name || "").slice(0, 120), company = String(q.company || "").slice(0, 200);
-      const r = q.mode === "recruiters" ? await findRecruiters(env, prefs, company) : await findPerson(env, prefs, name, company);
+      const r = q.mode === "recruiters" ? await findRecruiters(env, prefs, company, { li: liMode(q.li) }) : await findPerson(env, prefs, name, company);
       const gm = googleEnabled(cfg) ? await gmailStatus(db, uid) : { connected: false };
-      return json({ ...r, hasKey: !!prefs.hunter_key, gmail: gm.connected });
+      return json({ ...r, hasKey: !!prefs.hunter_key, hasSearchKey: !!prefs.search_key, gmail: gm.connected });
     }
     // Auto-try progress, asked for by the Gmail tab every few seconds after Send
     if (path === "/api/retry" && method === "POST") {
@@ -615,14 +615,14 @@ async function handle(req, env, ctx) {
   if (path === "/find") {
     const prefs = await prefsFor(db, cfg, uid);
     const q = Object.fromEntries(url.searchParams);
-    const form = { mode: q.mode === "person" ? "person" : "recruiters", name: (q.name || "").slice(0, 120), company: (q.company || "").slice(0, 200) };
+    const form = { mode: q.mode === "person" ? "person" : "recruiters", name: (q.name || "").slice(0, 120), company: (q.company || "").slice(0, 200), li: liMode(q.li) };
     let result = null;
     if (form.company.trim()) {
       result = form.mode === "person"
         ? await findPerson(env, prefs, form.name, form.company)
-        : await findRecruiters(env, prefs, form.company);
+        : await findRecruiters(env, prefs, form.company, { li: liMode(q.li) });
     }
-    return html(views.findPage({ user, hasKey: !!prefs.hunter_key, form, result }));
+    return html(views.findPage({ user, hasKey: !!prefs.hunter_key, hasSearchKey: !!prefs.search_key, form, result }));
   }
 
   if (path === "/links") {
@@ -741,6 +741,9 @@ async function handle(req, env, ctx) {
 
   return notFound();
 }
+
+// How the shared LinkedIn index is used: auto (index if good), both (search and add), fresh (new search only)
+const liMode = v => v === "both" || v === "fresh" ? v : "auto";
 
 export default {
   async fetch(req, env, ctx) {

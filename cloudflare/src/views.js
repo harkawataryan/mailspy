@@ -754,7 +754,7 @@ export function settingsPage({ cfg, base, user, prefs, ip = "", notice = "", gma
       <input type="password" id="search_key" name="search_key" autocomplete="off" spellcheck="false" placeholder="Paste a Tavily or SerpApi key" value="${esc(prefs.search_key || "")}">
       <div class="hint">Finds recruiters (and other people) at a company from their public LinkedIn profiles, through a web search; MailSpy never opens LinkedIn itself.
         Free: <a class="link" href="https://app.tavily.com/" target="_blank" rel="noreferrer">Tavily</a> (about 1,000 searches a month, no card) or
-        <a class="link" href="https://serpapi.com/users/sign_up" target="_blank" rel="noreferrer">SerpApi</a>. Each company is searched once every two weeks at most.</div>
+        <a class="link" href="https://serpapi.com/users/sign_up" target="_blank" rel="noreferrer">SerpApi</a>. Good results go into an index shared by everyone on MailSpy, so a company that's already been searched well costs no credits for 90 days.</div>
     </div></div>
 
   <noscript><div class="savebar"><button class="btn primary" type="submit">Save settings</button></div></noscript>
@@ -1188,7 +1188,25 @@ export function shortMissing() {
 }
 
 // ---------------------------------------------------------------- email finder
-export function findPage({ user, hasKey, form = {}, result = null }) {
+const agoText = ts => {
+  const s = Math.max(0, Date.now() / 1000 - (ts || 0));
+  return s < 120 ? "just now" : s < 7200 ? `${Math.round(s / 60)} min ago` : s < 172800 ? `${Math.round(s / 3600)} hours ago` : `${Math.round(s / 86400)} days ago`;
+};
+
+// Where the LinkedIn people came from (MailSpy's shared index, or a new search), and whether to offer searching again
+export function liSummary(li) {
+  if (!li || (!li.count && li.from === "index")) return null;
+  const n = `${li.count} ${li.count === 1 ? "person" : "people"}`;
+  if (li.from === "index") return {
+    text: li.good ? `LinkedIn: ${n} from MailSpy's shared index, updated ${agoText(li.updated)}. No search credits used.`
+      : `LinkedIn: ${n} from MailSpy's shared index so far.${li.canSearch ? "" : " Add a search key in Settings to look for more."}`,
+    again: li.canSearch };
+  if (li.from === "index+search") return { text: `LinkedIn: searched again and added to MailSpy's shared index, ${n} in all.`, again: false };
+  if (li.from === "search") return { text: `LinkedIn: ${n} from a new search${li.count ? ", saved in MailSpy's shared index" + (li.good ? " so nobody needs to search for this company again for a while" : "") : ""}.`, again: false };
+  return null;
+}
+
+export function findPage({ user, hasKey, hasSearchKey, form = {}, result = null }) {
   const mode = form.mode === "person" ? "person" : "recruiters";
   const tab = (m, label) => `<a class="btn sm${mode === m ? " primary" : ""}" href="/find?mode=${m}">${label}</a>`;
   const compose = email => `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email)}`;
@@ -1235,8 +1253,12 @@ export function findPage({ user, hasKey, form = {}, result = null }) {
         </tbody></table></div></div>` : "";
     const links = (result.links || []).length ? `<p style="margin:0 0 16px;display:flex;gap:8px;flex-wrap:wrap">${result.links.map(l =>
       `<a class="btn sm" href="${esc(l.href)}" target="_blank" rel="noreferrer">${esc(l.label)} ↗</a>`).join("")}</p>` : "";
+    const lis = result.mode === "recruiters" ? liSummary(result.li) : null;
+    const liHref = li => `/find?${esc(new URLSearchParams({ mode: "recruiters", company: form.company || result.domain, li }).toString())}`;
+    const liBar = lis ? `<div class="hint" style="margin:0 0 12px;display:flex;gap:12px;flex-wrap:wrap;align-items:baseline"><span>${esc(lis.text)}</span>${lis.again ? `
+      <a class="link" href="${liHref("both")}">Search again, add to these</a><a class="link" href="${liHref("fresh")}">New search only</a>` : ""}</div>` : "";
     out = `<h2 style="margin:24px 0 8px;font-size:15px">${title}${result.domain && result.organization ? ` <span class="faint" style="font-weight:400">${esc(result.domain)}</span>` : ""}</h2>
-      ${pattern}${result.notes.map(n => `<div class="note info">${esc(n)}</div>`).join("")}${people}${groups}${links}${result.mode === "recruiters" ? `<details style="margin-top:8px"><summary class="hint" style="cursor:pointer">Shared inboxes (careers@, jobs@…)</summary>${published}${guesses}</details>` : `${published}${guesses}`}`;
+      ${pattern}${result.notes.map(n => `<div class="note info">${esc(n)}</div>`).join("")}${liBar}${people}${groups}${links}${result.mode === "recruiters" ? `<details style="margin-top:8px"><summary class="hint" style="cursor:pointer">Shared inboxes (careers@, jobs@…)</summary>${published}${guesses}</details>` : `${published}${guesses}`}`;
   }
 
   const fields = mode === "person"
@@ -1250,7 +1272,7 @@ export function findPage({ user, hasKey, form = {}, result = null }) {
       <input type="hidden" name="mode" value="${mode}">${fields}
       <button class="btn primary" type="submit">Search</button>
     </form>
-    <div class="pb hint" style="margin:0;padding-top:0">Searches the company's website, public GitHub commits and public keys to learn its address format, and checks Gravatar to confirm addresses.${hasKey ? " Hunter.io results are added on top." : ` For named recruiters with job titles, add a free Hunter.io key in <a class="link" href="/settings#hunter_key">Settings</a>.`}</div></div>
+    <div class="pb hint" style="margin:0;padding-top:0">Searches the company's website, public GitHub commits and public keys to learn its address format, and checks Gravatar to confirm addresses.${hasSearchKey ? " Recruiters come from public LinkedIn profiles, shared across MailSpy so a company is only searched once." : ` For named recruiters with job titles, add a free search key in <a class="link" href="/settings#search_key">Settings</a>.`}${hasKey ? " Hunter.io results are added on top." : ""}</div></div>
   ${out}
   <script>
   // Check the best guesses against public GitHub commits, from this browser:
