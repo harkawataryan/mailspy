@@ -9,7 +9,10 @@ The flow after setup: change the extension, `npm run deploy` (bumps the version)
 commit, push. The workflow uploads it; it goes live after Google's review, which
 is usually under a day for updates.
 
-## 1. One-time: publish it by hand (about 30 minutes, plus review)
+## 1. One-time: publish it by hand (done)
+
+Already published: <https://chromewebstore.google.com/detail/mailspy-email-tracking-fo/dofghebhjogkhipgjkhnomhmaiplgdgi>
+(ID `dofghebhjogkhipgjkhnomhmaiplgdgi`, already saved as the `CWS_EXTENSION_ID` secret). Kept for reference:
 
 1. Make a developer account at <https://chrome.google.com/webstore/devconsole>
    (one-time $5 fee).
@@ -60,7 +63,6 @@ your own unpacked copy for development instead; it still reloads on every deploy
    Actions), or from a terminal in the repo:
 
    ```bash
-   gh secret set CWS_EXTENSION_ID     # the 32-letter ID from the dashboard
    gh secret set CWS_CLIENT_ID
    gh secret set CWS_CLIENT_SECRET
    gh secret set CWS_REFRESH_TOKEN
