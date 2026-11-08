@@ -6,6 +6,7 @@ import { esc, ago, now } from "./util.js";
 import { classifyAgent } from "./tracking.js";
 import { markSVG } from "../../brand/mark.js";
 import { NOTIFY_KINDS } from "./prefs.js";
+import { STATUSES, RANGES, PAGE_SIZE, filterQuery } from "./lists.js";
 
 const MARK = markSVG("mk");
 
@@ -152,6 +153,17 @@ const STYLE = `<style>
   .seg button:hover { color:var(--text); }
   .seg button.on { background:var(--sunk); color:var(--text); font-weight:500; }
   @media (max-width:720px) { .seg { display:none; } .search { width:150px; } }
+  .seg a { padding:0 10px; height:28px; display:flex; align-items:center; font-size:12.5px; color:var(--muted); border-left:1px solid var(--line-2); }
+  .seg a:first-child { border-left:0; }
+  .seg a:hover { color:var(--text); }
+  .seg a.on { background:var(--sunk); color:var(--text); font-weight:500; }
+  .tb { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 16px; border-bottom:1px solid var(--line); }
+  .tb .search { flex:1 1 150px; width:auto; min-width:130px; max-width:260px; }
+  .tb select { width:auto; height:30px; font-size:12.5px; padding:0 8px; }
+  .tb .clear { font-size:12.5px; }
+  @media (max-width:720px) { .tb .seg { display:flex; flex-wrap:wrap; } }
+  .pager { display:flex; align-items:center; gap:8px; padding:10px 16px; border-top:1px solid var(--line); font-size:12.5px; }
+  .pager .sp { flex:1; }
 
   /* activity list */
   .ev { list-style:none; margin:0; padding:4px 0; }
@@ -476,18 +488,20 @@ function activityItem(v) {
 }
 
 // ---- pages ----
-export function dashboard({ user, cfg, prefs, emails, totals, activity, reminders, maxAlert, week }) {
+export function dashboard({ user, cfg, prefs, emails, matched = emails.length, filters = { q: "", status: "", days: "", page: 1 },
+                           totals, activity, reminders, maxAlert, week }) {
   if (prefs && !prefs.show_automated) activity = activity.filter(v => !v.flagged);
-  const counts = { all: emails.length, opened: 0, unopened: 0, scheduled: 0 };
-  for (const e of emails) counts[statusOf(e)]++;
-  const rows = emails.length ? emails.map(e => `<tr class="row" data-href="/email/${e.id}" data-status="${statusOf(e)}"
-        data-q="${esc(`${e.subject} ${e.to_name || ""} ${e.to_addr}`.toLowerCase())}">
+  const f = filters;
+  const filtered = !!(f.q || f.status || f.days);
+  const rows = emails.length ? emails.map(e => `<tr class="row" data-href="/email/${e.id}">
       <td><div class="t1">${esc(e.subject)}</div><div class="t2">${recipient(e)}</div></td>
       <td>${status(e)}</td>
       <td class="r num">${e.opens || "<span class='faint'>0</span>"}</td>
       <td class="r num">${e.clicks || "<span class='faint'>0</span>"}</td>
       <td class="r time">${e.last_open ? esc(ago(e.last_open)) : "—"}</td></tr>`).join("")
-    : `<tr><td colspan="5"><div class="empty"><b>No tracked emails yet.</b> Send one from Gmail with the extension on and it appears here.</div></td></tr>`;
+    : `<tr><td colspan="5"><div class="empty">${totals.total
+        ? `<b>No emails match.</b> <a class="link" href="/">Clear filters</a>`
+        : `<b>No tracked emails yet.</b> Send one from Gmail with the extension on and it appears here.`}</div></td></tr>`;
 
   const pct = totals.total ? Math.round((100 * (totals.opened || 0)) / totals.total) : 0;
   const side = `
@@ -499,9 +513,23 @@ export function dashboard({ user, cfg, prefs, emails, totals, activity, reminder
       ${activity.length ? `<ul class="ev">${activity.map(activityItem).join("")}</ul>`
         : `<div class="empty">Opens and clicks appear here as they happen.</div>`}</div>`;
 
-  const seg = [["all", "All"], ["opened", "Opened"], ["unopened", "Not opened"], ["scheduled", "Scheduled"]]
-    .filter(([k]) => k === "all" || counts[k])
-    .map(([k, n]) => `<button type="button" data-f="${k}" class="${k === "all" ? "on" : ""}">${n}</button>`).join("");
+  // Search and filters live in the address (?q= &status= &days= &page=), so views can be bookmarked.
+  const seg = [{ key: "", label: "All" }, ...STATUSES]
+    .map(s => `<a href="/${esc(filterQuery(f, { status: s.key }))}" class="${f.status === s.key ? "on" : ""}">${esc(s.label)}</a>`).join("");
+  const toolbar = totals.total ? `
+      <form class="tb" method="get" action="/" role="search">
+        <div class="search">${SEARCH_ICON}<input id="q" name="q" type="text" placeholder="Search subject, person, company" autocomplete="off" value="${esc(f.q)}" aria-label="Search emails"><kbd>/</kbd></div>
+        ${f.status ? `<input type="hidden" name="status" value="${esc(f.status)}">` : ""}
+        <div class="seg" id="seg">${seg}</div>
+        <select name="days" aria-label="Date range" onchange="this.form.submit()">${RANGES.map(([k, n]) =>
+          `<option value="${k}"${f.days === k ? " selected" : ""}>${n}</option>`).join("")}</select>
+        ${filtered ? `<a class="link clear" href="/">Clear</a>` : ""}
+      </form>` : "";
+  const first = (f.page - 1) * PAGE_SIZE;
+  const pager = matched > PAGE_SIZE || f.page > 1 ? `<div class="pager">
+      <span class="muted num">${emails.length ? `${first + 1}–${first + emails.length} of ${matched}` : `${matched} in all`}</span><span class="sp"></span>
+      ${f.page > 1 ? `<a class="btn sm" href="/${esc(filterQuery(f, { page: f.page - 1 }))}">Newer</a>` : ""}
+      ${first + emails.length < matched ? `<a class="btn sm" href="/${esc(filterQuery(f, { page: f.page + 1 }))}">Older</a>` : ""}</div>` : "";
 
   const body = `
   <div class="head"><h1>Emails</h1></div>
@@ -513,37 +541,22 @@ export function dashboard({ user, cfg, prefs, emails, totals, activity, reminder
   ])}
   <div class="cols">
     <div class="panel">
-      <div class="ph"><h2>Sent<span class="count">${emails.length}</span></h2><span class="sp"></span>
-        ${emails.length ? `<div class="seg" id="seg">${seg}</div>
-        <div class="search">${SEARCH_ICON}<input id="q" type="text" placeholder="Search" autocomplete="off"><kbd>/</kbd></div>` : ""}
-      </div>
+      <div class="ph"><h2>Sent<span class="count">${matched}</span></h2><span class="sp"></span>
+        ${matched ? `<a class="btn sm" href="/emails.csv${esc(filterQuery(f))}" download>Download CSV</a>` : ""}
+      </div>${toolbar}
       <div style="overflow-x:auto"><table id="sent">
         <thead><tr><th>Email</th><th>Status</th><th class="r">Opens</th><th class="r">Clicks</th><th class="r">Last opened</th></tr></thead>
-        <tbody>${rows}</tbody></table>
-        <div class="empty" id="none" hidden>No emails match.</div></div>
+        <tbody>${rows}</tbody></table></div>${pager}
     </div>
     <div>${side}</div>
   </div>
   <script>
   (function () {
     var q = document.getElementById("q"); if (!q) return;
-    var f = "all", rows = [].slice.call(document.querySelectorAll("#sent tbody tr.row"));
-    function apply() {
-      var t = q.value.trim().toLowerCase(), shown = 0;
-      rows.forEach(function (r) {
-        var ok = (f === "all" || r.dataset.status === f) && (!t || r.dataset.q.indexOf(t) >= 0);
-        r.hidden = !ok; if (ok) shown++;
-      });
-      document.getElementById("none").hidden = shown > 0;
-    }
-    q.addEventListener("input", apply);
-    document.getElementById("seg").addEventListener("click", function (e) {
-      var b = e.target.closest("button"); if (!b) return;
-      f = b.dataset.f; [].forEach.call(this.children, function (c) { c.classList.toggle("on", c === b); }); apply();
-    });
+    var had = q.value;
     document.addEventListener("keydown", function (e) {
-      if (e.key === "/" && document.activeElement !== q && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); q.focus(); }
-      if (e.key === "Escape" && document.activeElement === q) { q.value = ""; apply(); q.blur(); }
+      if (e.key === "/" && document.activeElement !== q && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) { e.preventDefault(); q.focus(); }
+      if (e.key === "Escape" && document.activeElement === q) { q.value = ""; if (had) q.form.submit(); else q.blur(); }
     });
   })();
   </script>
@@ -591,7 +604,8 @@ export function emailPage({ user, prefs, email: e, links, events, maxAlert, base
     { k: "Last opened", v: when(opens.length ? opens[0].ts : null, "short"), small: true },
   ])}
   <div class="cols">
-    <div class="panel"><div class="ph"><h2>Activity<span class="count">${events.length}</span></h2></div>
+    <div class="panel"><div class="ph"><h2>Activity<span class="count">${events.length}</span></h2><span class="sp"></span>
+      ${allEvents.length ? `<a class="btn sm" href="/email/${e.id}.csv" download>Download CSV</a>` : ""}</div>
       <div style="overflow-x:auto"><table><thead><tr><th>Event</th><th>Client</th><th>Location</th><th class="r">Time</th></tr></thead>
       <tbody>${evRows}</tbody></table></div>
       ${bots ? `<div class="pb hint" style="border-top:1px solid var(--line);margin:0">${bots} automated ${bots > 1 ? "hits" : "hit"} left out of the counts.</div>` : ""}</div>
@@ -862,7 +876,8 @@ export function docsPage({ user, base, docs, notice = "", created = null }) {
       <button class="btn primary" type="submit">Upload</button>
       <span class="hint" style="margin:0">Up to 15 MB.</span>
     </form></div>
-  <div class="panel"><div class="ph"><h2>Your documents<span class="count">${docs.length}</span></h2></div>
+  <div class="panel"><div class="ph"><h2>Your documents<span class="count">${docs.length}</span></h2><span class="sp"></span>
+    ${docs.length ? `<a class="btn sm" href="/docs.csv" download>Download CSV</a>` : ""}</div>
     <div style="overflow-x:auto"><table><thead><tr><th>Document</th><th class="r">Views</th><th class="r">Time viewed</th><th class="r">Last viewed</th><th></th></tr></thead>
     <tbody>${rows}</tbody></table></div></div>`;
   return shell("Documents", body, "Documents", user);
@@ -1013,7 +1028,8 @@ export function linksPage({ user, base, links, notice = "", created = null, form
       <input type="text" name="label" placeholder="Label (optional)" value="${esc(form.label || "")}">
       <button class="btn primary" type="submit">Create link</button>
     </form></div>
-  <div class="panel"><div class="ph"><h2>Your links<span class="count">${links.length}</span></h2></div>
+  <div class="panel"><div class="ph"><h2>Your links<span class="count">${links.length}</span></h2><span class="sp"></span>
+    ${links.length ? `<a class="btn sm" href="/links.csv" download>Download CSV</a>` : ""}</div>
     <div style="overflow-x:auto"><table><thead><tr><th>Link</th><th class="r">Clicks</th><th class="r">Last click</th><th></th></tr></thead>
     <tbody>${rows}</tbody></table></div></div>`;
   return shell("Links", body, "Links", user);

@@ -20,6 +20,8 @@ import { listTemplates, getTemplate, saveTemplate, deleteTemplate, markUsed, tem
 import { pendingLabels, saveLabels } from "./labels.js";   // older Apps Script labels (kept for anyone still running it)
 import { uploadDoc, deleteDoc, docBeat, createLink, deleteLink, recordLinkClick, MAX_PDF_BYTES,
          saveThumb, thumbResponse, MAX_THUMB_BYTES } from "./docs.js";
+import { readFilters, emailListPage, emailsCsv, emailEventsCsv, docsCsv, linksCsv, DOCS_SQL, LINKS_SQL } from "./lists.js";
+import { classifyAgent } from "./tracking.js";
 
 // Everything a person has seen happen: email opens/clicks, PDF views, tracked-link clicks.
 const ACTIVITY_SQL = `SELECT * FROM (
@@ -454,9 +456,11 @@ async function handle(req, env, ctx) {
   if (!user) return path === "/" ? redirect(cfg.loginPath) : notFound(); // bare address -> sign in
   const uid = user.id;
 
+  // Emails list: ?q= search, ?status=, ?days=, ?page= (src/lists.js)
   if (path === "/" && method === "GET") {
-    const [emails, totals, activity, reminders, maxA, week] = await db.batch([
-      db.prepare("SELECT * FROM emails WHERE user_id=? ORDER BY id DESC LIMIT 200").bind(uid),
+    const filters = readFilters(url.searchParams);
+    const list = await emailListPage(db, uid, filters);
+    const [totals, activity, reminders, maxA, week] = await db.batch([
       db.prepare("SELECT COUNT(*) AS total, SUM(opens>0) AS opened, SUM(opens) AS opens, SUM(clicks) AS clicks FROM emails WHERE user_id=?").bind(uid),
       db.prepare(ACTIVITY_SQL).bind(uid, 30),
       db.prepare("SELECT * FROM alerts WHERE user_id=? AND kind IN ('followup','spike','revived') ORDER BY id DESC LIMIT 6").bind(uid),
@@ -465,10 +469,24 @@ async function handle(req, env, ctx) {
     ]);
     return html(views.dashboard({
       user, cfg, prefs: await prefsFor(db, cfg, uid),
-      emails: emails.results, totals: totals.results[0] || {}, activity: activity.results,
+      emails: list.emails, matched: list.matched, filters, totals: totals.results[0] || {}, activity: activity.results,
       reminders: reminders.results, maxAlert: maxA.results[0].m, week: week.results[0] || {},
     }));
   }
+
+  // ---- CSV downloads (signed-in only, this user's data only) ----
+  if (path === "/emails.csv" && method === "GET") return emailsCsv(db, uid, readFilters(url.searchParams));
+  m = path.match(/^\/email\/(\d+)\.csv$/);
+  if (m && method === "GET") {
+    const id = parseInt(m[1], 10);
+    const e = await db.prepare("SELECT * FROM emails WHERE id=? AND user_id=?").bind(id, uid).first();
+    if (!e) return notFound();
+    const ev = await db.prepare(`SELECT v.*, l.url FROM events v LEFT JOIN links l ON l.id=v.link_id
+                                 WHERE v.email_id=? ORDER BY v.ts DESC`).bind(id).all();
+    return emailEventsCsv(e, ev.results, classifyAgent);
+  }
+  if (path === "/docs.csv" && method === "GET") return docsCsv((await db.prepare(DOCS_SQL).bind(uid).all()).results, tbase);
+  if (path === "/links.csv" && method === "GET") return linksCsv((await db.prepare(LINKS_SQL).bind(uid).all()).results, tbase);
 
   m = path.match(/^\/email\/(\d+)$/);
   if (m && method === "GET") {
@@ -589,11 +607,7 @@ async function handle(req, env, ctx) {
         if (out.error) notice = `<div class="note bad">${esc(out.error)}</div>`; else created = out;
       }
     }
-    const docs = await db.prepare(`SELECT d.*,
-        (SELECT COUNT(*) FROM doc_views v WHERE v.doc_id=d.id AND v.is_self=0) AS views,
-        (SELECT SUM(seconds) FROM doc_views v WHERE v.doc_id=d.id AND v.is_self=0) AS seconds,
-        (SELECT MAX(ts) FROM doc_views v WHERE v.doc_id=d.id AND v.is_self=0) AS last_view
-      FROM docs d WHERE d.user_id=? ORDER BY d.id DESC`).bind(uid).all();
+    const docs = await db.prepare(DOCS_SQL).bind(uid).all();
     return html(views.docsPage({ user, base: tbase, docs: docs.results, notice, created }));
   }
   m = path.match(/^\/docs\/(\d+)(\/delete)?$/);
@@ -632,10 +646,7 @@ async function handle(req, env, ctx) {
       const out = await createLink(db, uid, form.url, form.label);
       if (out.error) notice = `<div class="note bad">${esc(out.error)}</div>`; else { created = out; form = {}; }
     }
-    const links = await db.prepare(`SELECT l.*,
-        (SELECT COUNT(*) FROM tlink_clicks c WHERE c.tlink_id=l.id AND c.is_bot=0) AS clicks,
-        (SELECT MAX(ts) FROM tlink_clicks c WHERE c.tlink_id=l.id AND c.is_bot=0) AS last_click
-      FROM tlinks l WHERE l.user_id=? ORDER BY l.id DESC`).bind(uid).all();
+    const links = await db.prepare(LINKS_SQL).bind(uid).all();
     return html(views.linksPage({ user, base: tbase, links: links.results, notice, created, form }));
   }
   m = path.match(/^\/links\/(\d+)(\/delete)?$/);
