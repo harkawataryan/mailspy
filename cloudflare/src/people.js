@@ -128,19 +128,23 @@ export async function loadPeople(db, uid) {
 export async function loadPerson(db, uid, addr) {
   await ensureGoogleSchema(db);
   const a = String(addr || "").trim().toLowerCase();
-  const rows = await db.prepare(sql.emails + " AND lower(trim(e.to_addr))=?2 ORDER BY e.id DESC").bind(uid, a).all();
+  const rows = await db.prepare(sql.emails + " AND lower(trim(e.to_addr))=?2 ORDER BY COALESCE(NULLIF(e.scheduled_at, -1), e.created_at) DESC, e.id DESC").bind(uid, a).all();
   if (!rows.results.length) return null;
   const opens = await db.prepare(sql.opens + " AND lower(trim(e.to_addr))=?2 ORDER BY v.ts DESC LIMIT 5000").bind(uid, a).all();
   return { person: groupPeople(rows.results, opens.results)[0], emails: rows.results };
 }
 
 // ---- open-time pattern ----
-// These two run in the browser too (views.js inlines them), because the hour
-// of day depends on the viewer's time zone. Keep them self-contained.
-
-// Local hours of day of someone's opens -> the 2-hour window most of them fall in,
-// or null when there are fewer than 3 opens or no clear favourite.
-export function usualWindow(hours) {
+// The hour of day depends on the viewer's time zone, so this runs in the browser
+// (views.js puts it in the page). It's kept as source text, not functions:
+// Wrangler's bundler rewrites function bodies (adding __name calls), which would
+// break them in the page. The unit tests run this exact text.
+//
+// usualWindow(hours): local hours of someone's opens -> the 2-hour window most of
+//   them fall in, { start, n, total }, or null with fewer than 3 opens or no clear favourite.
+// hourRange(start): 9 -> "9–11 AM", 11 -> "11 AM–1 PM"
+export const OPEN_PATTERN_JS = `
+function usualWindow(hours) {
   var total = hours.length;
   if (total < 3) return null;
   var c = [];
@@ -154,10 +158,9 @@ export function usualWindow(hours) {
   if (best < Math.max(2, Math.ceil(total * 0.4))) return null;
   return { start: start, n: best, total: total };
 }
-
-// 9 -> "9–11 AM", 11 -> "11 AM–1 PM"
-export function hourRange(start) {
+function hourRange(start) {
   function f(h) { h = ((h % 24) + 24) % 24; return (h % 12 || 12) + (h < 12 ? " AM" : " PM"); }
   var a = f(start), b = f(start + 2);
-  return a.slice(-2) === b.slice(-2) ? a.slice(0, -3) + "–" + b : a + "–" + b;
+  return a.slice(-2) === b.slice(-2) ? a.slice(0, -3) + "\\u2013" + b : a + "\\u2013" + b;
 }
+`;

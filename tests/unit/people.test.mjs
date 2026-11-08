@@ -32,15 +32,17 @@ const now = () => Date.now() / 1000;
 const H = 3600, D = 86400;
 
 // ---- helpers ----
+// The open-pattern code runs in the browser; test the exact text the page gets.
+const { usualWindow, hourRange } = new Function(P.OPEN_PATTERN_JS + "\nreturn { usualWindow, hourRange };")();
 check("org domain: subdomains belong to the company", P.orgDomain("eu.jobs.stripe.com") === "stripe.com" && P.orgDomain("mail.acme.co.uk") === "acme.co.uk" && P.orgDomain("figma.com") === "figma.com", "");
 check("personal addresses: webmail, not companies", P.isPersonal("gmail.com") && P.isPersonal("outlook.com") && P.isPersonal("yahoo.co.uk") && P.isPersonal("icloud.com") && !P.isPersonal("mail.acme.com") && !P.isPersonal("stripe.com"), "");
 check("company label: title-cased domain", P.companyLabel("acme-labs.io") === "Acme Labs" && P.companyLabel("eu.figma.com") === "Figma", P.companyLabel("acme-labs.io"));
-check("usual window: needs 3 opens", P.usualWindow([9, 9]) === null, "");
-const w = P.usualWindow([9, 9, 10, 10, 15, 22]);
+check("usual window: needs 3 opens", usualWindow([9, 9]) === null, "");
+const w = usualWindow([9, 9, 10, 10, 15, 22]);
 check("usual window: the 2-hour slot most opens fall in", w && w.start === 9 && w.n === 4 && w.total === 6, w);
-check("usual window: no clear favourite -> none", P.usualWindow([1, 5, 9, 13, 17, 21]) === null, "");
-check("usual window: wraps past midnight", P.usualWindow([23, 23, 0, 0, 12]).start === 23, P.usualWindow([23, 23, 0, 0, 12]));
-check("hour ranges read naturally", P.hourRange(9) === "9–11 AM" && P.hourRange(11) === "11 AM–1 PM" && P.hourRange(22) === "10 PM–12 AM" && P.hourRange(0) === "12–2 AM", [P.hourRange(9), P.hourRange(11), P.hourRange(22), P.hourRange(0)]);
+check("usual window: no clear favourite -> none", usualWindow([1, 5, 9, 13, 17, 21]) === null, "");
+check("usual window: wraps past midnight", usualWindow([23, 23, 0, 0, 12]).start === 23, usualWindow([23, 23, 0, 0, 12]));
+check("hour ranges read naturally", hourRange(9) === "9–11 AM" && hourRange(11) === "11 AM–1 PM" && hourRange(22) === "10 PM–12 AM" && hourRange(0) === "12–2 AM", [hourRange(9), hourRange(11), hourRange(22), hourRange(0)]);
 
 // ---- data ----
 await (await import(SRC + "google.js")).ensureGoogleSchema(db);
@@ -104,9 +106,16 @@ check("Person page: Write opens a Gmail compose to them", html.includes("https:/
 check("Person page: emails with statuses, open-time chart", html.includes(`data-href="/email/${j2}"`) && html.includes("st reply") && html.includes('id="hours"'), "");
 html = V.companyPage({ user, company: stripe });
 check("Company page: lists its people", html.includes('data-href="/people/jane%40stripe.com"') && html.includes('data-href="/people/sam%40eu.stripe.com"'), "");
-// the inlined browser code still runs on its own
-const fn = new Function(`var usualWindow = ${P.usualWindow.toString()}; var hourRange = ${P.hourRange.toString()}; return hourRange(usualWindow([14, 14, 15]).start);`);
-check("inlined open-pattern code is self-contained", fn() === "2–4 PM", fn());
+// the page's whole script runs on its own (no helpers from the bundler, no imports)
+const script = V.personPage({ user, person: one.person, company: { key: "stripe.com", name: "Stripe" }, emails: one.emails })
+  .match(/<script>\s*\(function \(\) \{\s*\nfunction usualWindow[\s\S]*?<\/script>/)[0].replace(/<\/?script>/g, "");
+const el = (data = {}) => ({ dataset: data, textContent: "", title: "", innerHTML: "" });
+const cell = el({ opens: "1,2,3" }), chart = el({ opens: [14, 14, 15].map(h => Date.UTC(2026, 0, 5, h) / 1000).join(",") }), usual = el();
+const fakeDoc = { querySelectorAll: () => ({ forEach: f => [cell].forEach(f) }), querySelector: () => null,
+  getElementById: id => ({ hours: chart, usual }[id] || null), addEventListener() {} };
+let ran = null;
+try { new Function("document", script)(fakeDoc); ran = usual.textContent; } catch (e) { ran = String(e); }
+check("page script runs: usual time and chart filled in", /^Usually opens \d+/.test(ran) && (chart.innerHTML.match(/<i /g) || []).length === 24, ran);
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 if (results.some(r => !r)) process.exit(1);

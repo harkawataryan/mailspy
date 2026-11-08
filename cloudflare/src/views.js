@@ -6,7 +6,7 @@ import { esc, ago, now } from "./util.js";
 import { classifyAgent } from "./tracking.js";
 import { markSVG } from "../../brand/mark.js";
 import { NOTIFY_KINDS } from "./prefs.js";
-import { usualWindow, hourRange } from "./people.js";
+import { OPEN_PATTERN_JS } from "./people.js";
 
 const MARK = markSVG("mk");
 
@@ -1095,8 +1095,7 @@ const opensAttr = p => p.opens.map(t => Math.round(t)).join(",");
 // Sortable columns, search, and "usually opens" worked out in the viewer's time zone.
 const PEOPLE_SCRIPT = `<script>
 (function () {
-  var usualWindow = ${usualWindow.toString()};
-  var hourRange = ${hourRange.toString()};
+  ${OPEN_PATTERN_JS}
   function hoursOf(el) {
     return (el.dataset.opens ? el.dataset.opens.split(",") : []).map(function (t) { return new Date(t * 1000).getHours(); });
   }
