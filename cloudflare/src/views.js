@@ -710,7 +710,38 @@ export function report({ user, sent, opened, replied = 0, clicks, bots, top, rep
   return shell("Report", body, "Report", user);
 }
 
-export function settingsPage({ cfg, base, user, prefs, ip = "", notice = "", gmail = { enabled: false }, hasPassword = true }) {
+// Settings → "Your tracking domain" (domains.js). domain = { target, current, fallback } or null when off.
+function domainSection(domain) {
+  if (!domain) return "";
+  const d = domain.current;
+  const field = (v = "") => `<input name="hostname" value="${esc(v)}" placeholder="go.yourdomain.com" autocomplete="off" spellcheck="false" required style="max-width:320px">`;
+  let inner;
+  if (!d) {
+    inner = `<form method="post" action="/settings/domain"><input type="hidden" name="action" value="set">
+      <label>Domain</label>${field()}
+      <div style="margin-top:12px"><button class="btn primary" type="submit">Use this domain</button></div></form>`;
+  } else {
+    const badge = d.status === "active" ? '<span class="pill ok" style="color:var(--accent)">● Working</span>'
+      : d.status === "error" ? '<span class="pill bad" style="color:var(--red)">● Problem</span>'
+      : '<span class="pill" style="color:var(--muted)">● Waiting for the DNS record</span>';
+    const steps = d.status === "active" ? `<p class="muted" style="margin:10px 0 0;font-size:13.5px">New emails, PDFs and short links use <b style="color:var(--text)">${esc(d.hostname)}</b>. Links in emails you already sent keep working.</p>`
+      : `<p style="margin:12px 0 6px;font-size:13.5px">Add this record where you manage ${esc(d.hostname.split(".").slice(1).join("."))}'s DNS:</p>
+      <table class="kv" style="font-family:ui-monospace,monospace;font-size:13px"><tr><td>Type</td><td>CNAME</td></tr>
+        <tr><td>Name</td><td>${esc(d.hostname)} <span class="muted" style="font-family:inherit">(some DNS sites want just ${esc(d.hostname.split(".")[0])})</span></td></tr><tr><td>Target</td><td>${esc(domain.target)}</td></tr></table>
+      <p class="muted" style="margin:8px 0 0;font-size:12.5px">If your DNS is on Cloudflare, set the record to <b>DNS only</b> (grey cloud). It usually works within a few minutes, and MailSpy checks every 10 minutes. Until then, your emails keep using ${esc(domain.fallback)}.</p>
+      ${d.error ? `<p class="muted" style="margin:8px 0 0;font-size:12.5px">Cloudflare says: ${esc(d.error)}</p>` : ""}`;
+    inner = `<p style="margin:0"><b>${esc(d.hostname)}</b> &nbsp;${badge}</p>${steps}
+      <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+        ${d.status !== "active" ? '<form method="post" action="/settings/domain"><input type="hidden" name="action" value="check"><button class="btn" type="submit">Check now</button></form>' : ""}
+        <form method="post" action="/settings/domain" onsubmit="return confirm('Stop using ${esc(d.hostname)}? New emails go back to ${esc(domain.fallback)}. Links in emails already sent with ${esc(d.hostname)} stop working.')"><input type="hidden" name="action" value="remove"><button class="btn" type="submit">Remove</button></form>
+      </div>`;
+  }
+  return `
+  <div class="sect" id="domain"><div><h3>Your tracking domain</h3><p class="d">Recipients see this address in your links and tracking image. Leave it to use ${esc(domain.fallback)}, or use a subdomain of your own, like go.yourdomain.com.</p></div>
+    <div class="body">${inner}</div></div>`;
+}
+
+export function settingsPage({ cfg, base, user, prefs, ip = "", notice = "", gmail = { enabled: false }, hasPassword = true, domain = null }) {
   const rules = [
     ["Ignore hits right after sending", `${cfg.prefetchWindow} seconds`],
     ["Open spike alert", `${cfg.spikeCount} opens in ${Math.round(cfg.spikeWindow / 60)} minutes`],
@@ -753,6 +784,8 @@ export function settingsPage({ cfg, base, user, prefs, ip = "", notice = "", gma
       </div>
       <div style="margin-top:16px"><button class="btn" type="submit">${hasPassword ? "Update password" : "Add password"}</button></div>
     </form></div>
+
+  ${domainSection(domain)}
 
   <div class="sect"><div><h3>Chrome extension</h3><p class="d">Tracks the emails you send from Gmail.</p></div>
     <div class="body">

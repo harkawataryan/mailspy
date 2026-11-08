@@ -11,6 +11,7 @@ import { sessionUser, apiUser, checkPassword, hashPassword, makeSession, session
          loginBlocked, noteLoginFailure, newApiKey, newInviteCode } from "./auth.js";
 import { PIXEL_GIF, prepareEmail, recordEvent, markSelfView, markScheduled, runScheduled, placeOf, settledAlerts } from "./tracking.js";
 import { hideTracking, sweepSentCopies } from "./sentcopy.js";
+import { domainsEnabled, ensureDomainSchema, userDomain, userTrackBase, isUserDomain, setDomain, refreshDomain, removeDomain, checkPendingDomains } from "./domains.js";
 import { queueDrafts, listQueue, cancelQueued, editQueued, trackQueuedLinks, sendDue } from "./sendlater.js";
 import * as views from "./views.js";
 import { prefsFor, prefsFromForm, accountAllowed, trackedAccounts } from "./prefs.js";
@@ -79,7 +80,7 @@ async function handle(req, env, ctx) {
   const cfg = settings(env);
   cfg.extensionVersion = manifest.version;
   const base = cfg.baseUrl || url.origin;
-  const tbase = cfg.trackUrl || base;  // address used in emails and shared links
+  let tbase = cfg.trackUrl || base;  // address used in emails and shared links (or the user's own domain, below)
   const db = env.DB;
   const secure = url.protocol === "https:";
   const ip = req.headers.get("CF-Connecting-IP") || "unknown";
@@ -108,7 +109,10 @@ async function handle(req, env, ctx) {
   // short-link page, and nothing else (sign-in, dashboard, API) exists here.
   let trackHost = "";
   try { trackHost = cfg.trackUrl ? new URL(cfg.trackUrl).host : ""; } catch {}
-  const onTrackHost = !!trackHost && (req.headers.get("Host") || url.host) === trackHost;
+  const reqHost = String(req.headers.get("Host") || url.host).toLowerCase();
+  // someone's own tracking domain (domains.js) behaves exactly like TRACK_URL
+  const onUserDomain = reqHost !== trackHost && await isUserDomain(env, reqHost);
+  const onTrackHost = (!!trackHost && reqHost === trackHost) || onUserDomain;
 
   // ---- open pixel ----  (/img/<token>.gif; /t/ is the older form)
   let m = path.match(/^\/(?:t|img)\/([A-Za-z0-9_-]+)(?:\.gif|\.png)?$/);
@@ -191,7 +195,7 @@ async function handle(req, env, ctx) {
       if (r) return r;
     }
     if (path === "/robots.txt") return new Response("User-agent: *\nDisallow: /\n", { headers: { "Content-Type": "text/plain" } });
-    if (path === "/") return html(views.shortHome(cfg));
+    if (path === "/") return html(views.shortHome(onUserDomain ? { ...cfg, trackHome: "" } : cfg));
     return html(views.shortMissing(), 404);
   }
 
@@ -360,12 +364,13 @@ async function handle(req, env, ctx) {
     const user = await apiUser(req, db, cfg);
     if (!user) return json({ error: "Sign in again in the MailSpy extension." }, 401);
     const uid = user.id;
+    tbase = (await userTrackBase(env, uid)) || tbase;
 
     if (path === "/api/me") {
       const prefs = await prefsFor(db, cfg, uid);
       const gm = googleEnabled(cfg) ? await gmailStatus(db, uid) : { connected: false };
       return json({ email: user.email, name: user.name, notify: prefs.notify, track_all_links: prefs.track_all_links, pdf_tiles: prefs.pdf_tiles, gmail: gm.connected, ai: !!prefs.claude_key,
-        buttons: { find: prefs.btn_find, templates: prefs.btn_templates, draft: prefs.btn_draft } });
+        buttons: { find: prefs.btn_find, templates: prefs.btn_templates, draft: prefs.btn_draft }, track: tbase });
     }
     if (path === "/api/prepare" && method === "POST") {
       const data = await readBody(req);
@@ -387,7 +392,7 @@ async function handle(req, env, ctx) {
       // (Anything missed here is picked up by the scheduled sweep.)
       if (out.id && googleEnabled(cfg)) {
         log(new Promise(r => setTimeout(r, 20000)).then(() => labelEmail(env, cfg, out.id))
-          .then(() => hideTracking(env, cfg, out.id, [tbase, base])));
+          .then(() => hideTracking(env, cfg, out.id, [...new Set([tbase, cfg.trackUrl, base].filter(Boolean))])));
       }
       return json(out);
     }
@@ -512,6 +517,7 @@ async function handle(req, env, ctx) {
   if (!user && path === "/extension-link") return redirect(googleEnabled(cfg) ? "/auth/google?mode=ext" : cfg.loginPath);
   if (!user) return path === "/" ? redirect(cfg.loginPath) : notFound(); // bare address -> sign in
   const uid = user.id;
+  tbase = (await userTrackBase(env, uid)) || tbase;
 
   // Emails list: ?q= search, ?status=, ?days=, ?page= (src/lists.js)
   if (path === "/" && method === "GET") {
@@ -690,6 +696,25 @@ async function handle(req, env, ctx) {
     return json({ ok: true, learned: out.ai_learned, examples: out.ai_examples.length });
   }
 
+  // Your own tracking domain (domains.js)
+  if (path === "/settings/domain" && method === "POST" && domainsEnabled(env)) {
+    const form = await readBody(req);
+    let msg = "";
+    try {
+      if (form.action === "remove") { await removeDomain(env, uid); msg = "ok:Removed. Your emails use " + new URL(cfg.trackUrl || base).host + " again."; }
+      else if (form.action === "check") {
+        const d = await refreshDomain(env, await userDomain(db, uid));
+        msg = d && d.status === "active" ? "ok:" + d.hostname + " is working. New emails use it." : "info:Not ready yet. Cloudflare hasn't seen the record, or the certificate is still being issued.";
+      } else {
+        const appHost = url.host, tHost = trackHost;
+        const parent = h => h.split(".").slice(-2).join(".");
+        const d = await setDomain(env, uid, form.hostname, [appHost, tHost, parent(appHost), parent(tHost)]);
+        msg = d.status === "active" ? "ok:" + d.hostname + " is working. New emails use it." : "ok:Added. Now add the DNS record below.";
+      }
+    } catch (e) { msg = "bad:" + e.message; }
+    return redirect("/settings?domain=" + encodeURIComponent(msg) + "#domain");
+  }
+
   if (path === "/settings") {
     let notice = "";
     if (method === "POST") {
@@ -733,11 +758,18 @@ async function handle(req, env, ctx) {
         }
       }
     }
+    const dm = url.searchParams.get("domain");
+    if (dm) { const [k, ...rest] = dm.split(":"); notice = `<div class="note ${["ok", "bad"].includes(k) ? k : ""}">${esc(rest.join(":"))}</div>`; }
     if (url.searchParams.get("gmail")) notice = '<div class="note ok">Gmail connected. Your tracked emails will get ✔ when sent and ✔✔ when opened.</div>';
     const pwRow = await db.prepare("SELECT password_hash FROM users WHERE id=?").bind(uid).first();
     const gmailInfo = { enabled: googleEnabled(cfg), ...(googleEnabled(cfg) ? await gmailStatus(db, uid) : {}) };
+    let domain = null;
+    if (domainsEnabled(env)) {
+      await ensureDomainSchema(db);
+      domain = { target: env.SAAS_TARGET, current: await userDomain(db, uid), fallback: new URL(cfg.trackUrl || base).host };
+    }
     return html(views.settingsPage({ cfg, base, user, prefs: await prefsFor(db, cfg, uid), ip, notice,
-      gmail: gmailInfo, hasPassword: pwRow.password_hash !== GOOGLE_ONLY }));
+      gmail: gmailInfo, hasPassword: pwRow.password_hash !== GOOGLE_ONLY, domain }));
   }
 
   // ---- the extension signs in through here (after Sign in with Google) ----
@@ -929,5 +961,7 @@ export default {
     ctx.waitUntil(sweepRetries(env, cfg).catch(err => console.error("auto-try sweep:", err)));
     // Emails MailSpy sends for you at a set time (sendlater.js)
     ctx.waitUntil(sendDue(env, cfg).catch(err => console.error("send later:", err)));
+    // Tracking domains still waiting on their DNS record (domains.js)
+    ctx.waitUntil(checkPendingDomains(env).catch(err => console.error("domains:", err)));
   },
 };

@@ -95,6 +95,10 @@ If you change the extension and want those changes in everyone's hands, publish
 your own Web Store listing ([chrome-web-store.md](chrome-web-store.md), with
 your own extension ID and secrets), or send your changes back as a pull request.
 
+**Only want your own domain in your emails?** You may not need any of this. If
+the MailSpy server you use has it switched on, set **Settings → Your tracking
+domain** and add one DNS record. See [own-tracking-domain.md](own-tracking-domain.md).
+
 ## Getting updates from the original
 
 ```

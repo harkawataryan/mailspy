@@ -39,6 +39,7 @@ REVIVAL_DAYS = "7"           # reopened after this many quiet days = "revived" a
 FOLLOWUP_HOURS = "48"        # unopened after this long = follow-up reminder
 IGNORE_IPS = ""              # comma-separated IPs to ignore (e.g. your own)
 EXTENSION_URL = "https://chromewebstore.google.com/detail/mailspy-email-tracking-fo/dofghebhjogkhipgjkhnomhmaiplgdgi"   # Chrome Web Store listing
+SAAS_TARGET = "saas.aryanh.dev"             # where people point their own tracking domain (set by apply-config; see src/domains.js)
 CONTACT_EMAIL = ""           # contact address shown in the privacy policy
 
 # The extension zip friends download (built by scripts/bump-extension.mjs before each deploy)

@@ -40,6 +40,7 @@
 import { now } from "./util.js";
 import { googleEnabled, ensureGoogleSchema, accessToken, gmail, labelEmail } from "./google.js";
 import { readPrefs } from "./prefs.js";
+import { userTrackBase } from "./domains.js";
 
 // Big raw messages cost Worker CPU to decode and re-encode, and a JSON upload
 // of the raw message has to stay well under Gmail's ~5 MB simple-upload size.
@@ -178,6 +179,8 @@ export async function hideTracking(env, cfg, emailId, hosts = hostsOf(cfg)) {
     FROM emails e JOIN users u ON u.id = e.user_id WHERE e.id=?`).bind(emailId).first();
   if (!e || !e.gmail_token) return "off";
   if (!readPrefs(cfg, e.prefs).hide_sent_pixel) return "off";
+  const own = await userTrackBase(env, e.user_id).catch(() => "");   // their own tracking domain, if any
+  if (own && !hosts.includes(own)) hosts = [...hosts, own];
   if (!e.gmail_msg || watching(e.retry_json)) return "wait";   // not found in Sent yet / auto-try still needs it
   const t = Math.floor(now());
   if (!claimable(e.sent_clean, t)) return parseState(e.sent_clean).kind === "work" ? "busy" : e.sent_clean;

@@ -28,5 +28,5 @@ async function getAuth() {
 }
 
 async function signOut() {
-  await chrome.storage.local.remove(["apiKey", "email", "name", "lastAlertId", "unseen", "unseenKeys"]);
+  await chrome.storage.local.remove(["apiKey", "email", "name", "lastAlertId", "unseen", "unseenKeys", "myTrack"]);
 }

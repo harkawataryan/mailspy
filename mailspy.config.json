@@ -6,6 +6,7 @@
   "extensionStoreUrl": "https://chromewebstore.google.com/detail/mailspy-email-tracking-fo/dofghebhjogkhipgjkhnomhmaiplgdgi",
   "cloudflare": {
     "databaseId": "4b072773-b7ef-46a4-b1b3-480f07fb33f7",
-    "kvId": "b2679b027f874d7b909f8189dacd93e2"
+    "kvId": "b2679b027f874d7b909f8189dacd93e2",
+    "saasTarget": "saas.aryanh.dev"
   }
 }

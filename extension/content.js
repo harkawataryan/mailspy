@@ -30,6 +30,11 @@ var TOKEN = "data-mailspy-token";
 var MAILSPY_SERVER = MAILSPY_APP;   // from site.js (mailspy.config.json)
 var TRACK_HOST = MAILSPY_TRACK_HOST;   // the address used inside emails (site.js)
 MAILSPY_READY.then(function () { MAILSPY_SERVER = MAILSPY_APP; TRACK_HOST = MAILSPY_TRACK_HOST; });
+// Your own tracking domain, if you set one in MailSpy Settings (from /api/me, saved by gmail-compose.js)
+var MY_TRACK_HOST = "";
+function setMyTrack(v) { try { MY_TRACK_HOST = v ? new URL(v).host : ""; } catch (e) { MY_TRACK_HOST = ""; } }
+chrome.storage.local.get(["myTrack"]).then(function (v) { setMyTrack(v.myTrack); }).catch(function () {});
+chrome.storage.onChanged.addListener(function (c, area) { if (area === "local" && c.myTrack) setMyTrack(c.myTrack.newValue); });
 
 // { server, apiKey } for the signed-in account (same storage as config.js).
 async function cfg() {
@@ -351,7 +356,7 @@ async function reportSelfView(token) {
 // Gmail's image proxy (which keeps the original address after a "#").
 function pixelToken(img) {
   const src = (img && img.getAttribute && img.getAttribute("src")) || "";
-  if (!(src.includes(TRACK_HOST) || (serverHost && src.includes(serverHost)))) return null;
+  if (!(src.includes(TRACK_HOST) || (serverHost && src.includes(serverHost)) || (MY_TRACK_HOST && src.includes(MY_TRACK_HOST)))) return null;
   const m = src.match(/\/(?:t|img)\/([A-Za-z0-9_-]{8,})\.gif/);
   return m ? m[1] : null;
 }

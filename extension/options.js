@@ -23,7 +23,7 @@ async function chooseServer(input) {
   if (origin === MAILSPY_DEFAULT_APP) await chrome.storage.local.remove(["server", "trackHost"]);
   else await chrome.storage.local.set({ server: origin, trackHost });
   // a different server means a different account: sign out of the old one
-  await chrome.storage.local.remove(["apiKey", "email", "name"]);
+  await chrome.storage.local.remove(["apiKey", "email", "name", "myTrack"]);
   MAILSPY_APP = origin; SERVER = origin;
   if (trackHost) { MAILSPY_TRACK_HOST = trackHost; MAILSPY_TRACK = "https://" + trackHost; }
   return origin;

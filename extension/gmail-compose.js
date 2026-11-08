@@ -1265,6 +1265,9 @@
         trackAll = !!me.track_all_links;
         pdfTilesOn = me.pdf_tiles === true;
         if (me.buttons) { applyButtons(me.buttons); chrome.storage.local.set({ composeButtons: me.buttons }); }
+        // your own tracking domain (MailSpy Settings): links on it are already tracked
+        if (me.track && OURS.indexOf(me.track) < 0) OURS.push(me.track);
+        chrome.storage.local.get(["myTrack"]).then(function (v) { if ((v.myTrack || "") !== (me.track || "")) chrome.storage.local.set({ myTrack: me.track || "" }); });
         scanChips();
       }
     } catch (e) {}

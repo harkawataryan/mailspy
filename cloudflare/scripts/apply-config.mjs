@@ -5,7 +5,8 @@
 //   track              the address used inside emails (pixel, tracked links, PDFs)
 //   home               linked from the tracking address's front page
 //   extensionStoreUrl  your Chrome Web Store listing ("" until you have one)
-//   cloudflare         your D1 database id and KV namespace id
+//   cloudflare         your D1 database id and KV namespace id, and optionally
+//                      saasTarget: lets your users bring their own tracking domain (src/domains.js)
 //
 // Writes extension/site.js and updates extension/manifest.json and
 // cloudflare/wrangler.toml in place. Runs before every deploy and package;
@@ -32,6 +33,7 @@ export function readConfig(text) {
     extensionStoreUrl: String(c.extensionStoreUrl || "").trim(),
     databaseId: String((c.cloudflare || {}).databaseId || "").trim(),
     kvId: String((c.cloudflare || {}).kvId || "").trim(),
+    saasTarget: String((c.cloudflare || {}).saasTarget || "").trim().toLowerCase(),
   };
   if (!out.name || /["\\]/.test(out.name)) throw new Error("name can't be empty or contain quotes");
   if (new URL(out.app).host === new URL(out.track).host) throw new Error("app and track must be different addresses");
@@ -89,6 +91,7 @@ export function applyToml(toml, c) {
   setVar("TRACK_URL", c.track);
   setVar("TRACK_HOME", c.home);
   setVar("EXTENSION_URL", c.extensionStoreUrl);
+  if (/^SAAS_TARGET\s*=/m.test(t)) setVar("SAAS_TARGET", c.saasTarget || "");
   if (c.databaseId) t = t.replace(/^(database_id\s*=\s*)"[^"]*"/m, `$1"${c.databaseId}"`);
   if (c.kvId) t = t.replace(/(\[\[kv_namespaces\]\][^\[]*?\nid\s*=\s*)"[^"]*"/, `$1"${c.kvId}"`);
   return t;
