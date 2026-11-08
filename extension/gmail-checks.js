@@ -14,7 +14,7 @@
   if (window.__mailspyChecks && window.__mailspyChecks.alive()) return;
   window.__mailspyChecks = { alive: alive };
 
-  var SERVER = "https://mailspy.aryanh.dev";
+  var SERVER = MAILSPY_APP;   // from site.js
   var CLS = "mailspy-ck";
   var REFRESH_MS = 45000;
   var checks = {};          // thread id (hex) -> { s: "sent"|"opened", n, c, last, replied }

@@ -77,6 +77,8 @@ recipients' mail apps fetch the image and follow the links from there. A
 
 - **Cloudflare (free):** see [SETUP.md](SETUP.md). Runs on Cloudflare's free
   plan at a subdomain of your own domain.
+- **Your own copy on your own domain:** see [docs/run-your-own-copy.md](docs/run-your-own-copy.md).
+  Every domain comes from one file, `mailspy.config.json`.
 - **Your own server (Python):** `sudo bash deploy/install.sh track.yourdomain.com`
   on a fresh Ubuntu server installs MailSpy behind Caddy with automatic HTTPS.
   Then run `set-password` as the installer tells you.

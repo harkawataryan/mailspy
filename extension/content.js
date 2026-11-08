@@ -27,8 +27,8 @@ window.__mailspy = { alive };
 var SKIP = "data-mailspy-sent";
 var TOKEN = "data-mailspy-token";
 
-var MAILSPY_SERVER = "https://mailspy.aryanh.dev";
-var TRACK_HOST = "go.aryanh.dev";   // the short-link address used inside emails
+var MAILSPY_SERVER = MAILSPY_APP;   // from site.js (mailspy.config.json)
+var TRACK_HOST = MAILSPY_TRACK_HOST;   // the address used inside emails (site.js)
 
 // { server, apiKey } for the signed-in account (same storage as config.js).
 async function cfg() {

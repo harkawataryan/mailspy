@@ -1,7 +1,7 @@
 // Shared by the popup, the sign-in page and the background worker.
 // (content.js keeps its own copy so it stays a single self-contained file.)
 
-var SERVER = "https://mailspy.aryanh.dev";
+var SERVER = MAILSPY_APP;   // from site.js (mailspy.config.json)
 
 // Your sign-in for this browser: { apiKey, email, name }.
 // Older versions kept the API key in sync storage; move it over once.

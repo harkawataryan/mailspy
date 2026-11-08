@@ -10,13 +10,14 @@
 //
 //   npm run store-assets            (needs Google Chrome or Microsoft Edge installed)
 
-import { writeFileSync, mkdirSync, existsSync, rmSync, mkdtempSync, readdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, rmSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import * as views from "../src/views.js";
 import { markSVG } from "../../brand/mark.js";
+const APP_HOST = new URL(JSON.parse(readFileSync(new URL("../../mailspy.config.json", import.meta.url), "utf8")).app).host;   // shown in the window bar
 
 const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, "..", "..", "dist", "store");
@@ -179,7 +180,7 @@ const BG = `radial-gradient(900px 520px at 100% 0%, #d1fae5 0%, transparent 60%)
             radial-gradient(700px 500px at 0% 100%, #e0f2fe 0%, transparent 55%), #f7f9fb`;
 function frame({ eyebrow, title, body, bullets, img, imgW, imgH, mode = "window", bleed = false }) {
   const shot = mode === "window"
-    ? `<div class="win" style="width:${imgW}px"><div class="bar"><i></i><i></i><i></i><span>mailspy.aryanh.dev</span></div>
+    ? `<div class="win" style="width:${imgW}px"><div class="bar"><i></i><i></i><i></i><span>${APP_HOST}</span></div>
          <img src="${fileUrl(img)}" style="width:${imgW}px;height:${imgH}px"></div>`
     : mode === "card"
       ? `<img class="card" src="${fileUrl(img)}" style="width:${imgW}px;height:${imgH}px">`

@@ -5,9 +5,10 @@ compatibility_date = "2026-09-01"
 # Free address: https://mailspy.<your-subdomain>.workers.dev
 workers_dev = true
 
-# Your own address (aryanh.dev is active on Cloudflare).
-# The dashboard lives on mailspy.aryanh.dev. Emails and shared links only ever
-# show go.aryanh.dev, which looks and behaves like a plain URL shortener.
+# Your own addresses, set from mailspy.config.json (app and track) by
+# scripts/apply-config.mjs before every deploy. The dashboard lives on "app";
+# emails and shared links only ever show "track", which looks and behaves like a
+# plain URL shortener. Both domains must be on your Cloudflare account.
 routes = [
   { pattern = "mailspy.aryanh.dev", custom_domain = true },
   { pattern = "go.aryanh.dev", custom_domain = true },

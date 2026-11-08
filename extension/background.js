@@ -7,7 +7,7 @@
 //     behind, it updates: a Chrome Web Store install asks Chrome to fetch the
 //     update now; an unpacked (developer) install reloads itself from its folder.
 
-importScripts("config.js");
+importScripts("site.js", "config.js");
 
 const NOTIFY = ["open", "click", "reply", "doc", "link", "spike", "revived", "followup", "retry"];
 const BADGE_KINDS = ["open", "click", "reply", "doc", "link"];
@@ -138,7 +138,7 @@ async function poll() {
 async function reattach() {
   try {
     for (const t of await chrome.tabs.query({ url: GMAIL })) {
-      try { await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["content.js", "gmail-button.js", "finder-ui.js", "gmail-compose.js", "gmail-checks.js"] }); } catch (e) {}
+      try { await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ["site.js", "content.js", "gmail-button.js", "finder-ui.js", "gmail-compose.js", "gmail-checks.js"] }); } catch (e) {}
     }
   } catch (e) {}
 }

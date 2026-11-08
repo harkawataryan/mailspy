@@ -20,7 +20,7 @@
   function alive() { try { return !!(chrome.runtime && chrome.runtime.id); } catch (e) { return false; } }
   if (window.__mailspyFinder && window.__mailspyFinder.alive()) return;
 
-  var SERVER = "https://mailspy.aryanh.dev";
+  var SERVER = MAILSPY_APP;   // from site.js
 
   var CSS = `
     :host { all: initial; position: fixed; z-index: 2147483001; }
