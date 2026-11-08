@@ -12,7 +12,7 @@ is usually under a day for updates.
 ## 1. One-time: publish it by hand (done)
 
 Already published: <https://chromewebstore.google.com/detail/mailspy-email-tracking-fo/dofghebhjogkhipgjkhnomhmaiplgdgi>
-(ID `dofghebhjogkhipgjkhnomhmaiplgdgi`, already saved as the `CWS_EXTENSION_ID` secret). Kept for reference:
+(ID `dofghebhjogkhipgjkhnomhmaiplgdgi`, which goes in the `CWS_EXTENSION_ID` secret below). Kept for reference:
 
 1. Make a developer account at <https://chrome.google.com/webstore/devconsole>
    (one-time $5 fee).
@@ -63,6 +63,7 @@ your own unpacked copy for development instead; it still reloads on every deploy
    Actions), or from a terminal in the repo:
 
    ```bash
+   gh secret set CWS_EXTENSION_ID --body dofghebhjogkhipgjkhnomhmaiplgdgi
    gh secret set CWS_CLIENT_ID
    gh secret set CWS_CLIENT_SECRET
    gh secret set CWS_REFRESH_TOKEN
