@@ -82,10 +82,8 @@ extension (`extension/site.js` and `manifest.json`) and to
    The extension then talks only to your server, and the setting stays per
    browser. Your friends do the same with your address.
 
-   **If you're changing the extension itself:** load your fork's `extension`
-   folder instead (`chrome://extensions` → **Developer mode** → **Load
-   unpacked**). It uses your `mailspy.config.json` addresses by default and
-   reloads itself after each of your deploys.
+   **If you're changing the extension itself,** load your fork's `extension`
+   folder instead. See [Developing the extension](#developing-the-extension).
 
 To share yours with friends:
 - Create invites at `<app>/admin`.
@@ -116,3 +114,51 @@ The Worker is in `cloudflare/src/` (one file per feature, `index.js` routes
 requests), the extension is in `extension/`, and the tests are in
 `tests/unit/` (`npm test` in `cloudflare/`). Deploys refuse to go out if a test
 fails. See [DEVELOPING.md](../DEVELOPING.md) for how the pieces fit together.
+
+## Developing the extension
+
+Load the extension straight from your clone, and it updates itself every time
+you deploy.
+
+**Set up once**
+1. Set up your server (steps 1 to 8 above). Your `mailspy.config.json` makes
+   the extension in your clone point at your server by default.
+2. Go to `chrome://extensions`, turn on **Developer mode**, click **Load
+   unpacked** and pick the `extension` folder inside your clone. Use the
+   folder, not a zip.
+3. Click the MailSpy icon and sign in.
+
+**Each change**
+1. Edit files in `extension/` (or the server in `cloudflare/src/`).
+2. Run `npm run deploy` in `cloudflare/`.
+
+The deploy does the rest:
+- It runs the tests and stops if one fails.
+- If the extension changed, it raises the version in your folder.
+- It deploys the server, which then reports that new version.
+
+Every 30 seconds the extension asks its server which version is current
+(`/api/version`). When the server reports a newer one than the extension that's
+running, it reloads itself from your folder. The deploy has already put the new
+files there, so you get the new code without doing anything. Open Gmail tabs
+get the new scripts too, without a refresh.
+
+**Things to watch for**
+- **Edits without a deploy don't reload anything.** While trying things out,
+  click the reload icon on the MailSpy card in `chrome://extensions`, then
+  refresh Gmail.
+- **Sign in to your own server.** The extension compares its version with the
+  server it's signed in to. Pointed at someone else's server, it won't reload
+  when you deploy.
+- **Deploy from the folder Chrome loads.** If you deploy from another computer,
+  this folder doesn't get the new files. The extension reloads once, sees it's
+  still out of date, and shows a red **NEW** badge instead. Run `git pull` in
+  the folder to catch up.
+- **Leave the folder where it is.** Chrome loads it from that exact path, so
+  moving or deleting the clone breaks the extension.
+
+**Updating your friends too:** for people using your server to get your
+extension changes automatically, publish your own Chrome Web Store listing
+and set up the publish workflow ([chrome-web-store.md](chrome-web-store.md),
+with your own extension ID and secrets). After that, each push to your fork's
+`main` that changes `extension/` uploads a new version for Google to review.
