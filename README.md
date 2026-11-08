@@ -56,8 +56,9 @@ Loads your tracking into Gmail's web UI.
 1. Install it from the [Chrome Web Store](https://chromewebstore.google.com/detail/mailspy-email-tracking-fo/dofghebhjogkhipgjkhnomhmaiplgdgi).
    (For development: `chrome://extensions` → enable **Developer mode** →
    **Load unpacked** → select the `extension/` folder.)
-2. Click the MailSpy icon → **Settings** → paste your **server URL** and the
-   **API key**. Both are shown on the dashboard's Settings page.
+2. Click the MailSpy icon and sign in with your MailSpy account. If you run
+   your own copy, first open **Use a different MailSpy server** on the sign-in
+   page and enter your server's address.
 3. Compose in Gmail and hit Send. The extension registers the email with your
    server and injects the pixel + tracked links before it leaves. The popup
    shows your live activity feed; desktop notifications fire on each open.
