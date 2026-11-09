@@ -210,11 +210,14 @@ export async function editQueued(env, cfg, uid, replace, after = 0, limit = 15) 
 // Record when it really goes out, so the hits that come right after sending
 // (Google's own scan of outgoing mail, link scanners, bounce processing) fall in
 // the "just sent" window and aren't counted as the recipient opening it.
+// Sends go out one after another, and Google's scan comes up to ~10 seconds after
+// each, so the recorded time gets SEND_SLACK on top of the usual window.
+const SEND_SLACK = 20;
 async function markSendTime(db, q, t) {
   const rows = (await db.prepare("SELECT id, subject FROM emails WHERE user_id=? AND lower(to_addr)=lower(?) ORDER BY id DESC LIMIT 5")
     .bind(q.user_id, q.to_addr).all()).results;
   const e = rows.find(r => r.subject === q.subject) || (rows.length === 1 ? rows[0] : null);
-  if (e) await db.prepare("UPDATE emails SET scheduled_at=? WHERE id=?").bind(t, e.id).run();
+  if (e) await db.prepare("UPDATE emails SET scheduled_at=? WHERE id=?").bind(t + SEND_SLACK, e.id).run();
 }
 
 export async function sendDue(env, cfg, t = now()) {
