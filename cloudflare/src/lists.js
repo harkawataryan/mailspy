@@ -52,7 +52,7 @@ const likeEsc = s => s.replace(/[\\%_]/g, c => "\\" + c);
 // Search: every word must appear in the subject, recipient name or address
 // (the address covers the company domain, e.g. "stripe" or "@stripe.com").
 export function emailWhere(uid, f, t = now()) {
-  const parts = ["e.user_id=?"], args = [uid];
+  const parts = ["e.user_id=?", "e.bounced_at IS NULL"], args = [uid];
   for (const term of (f.q ? f.q.split(" ") : []).slice(0, MAX_TERMS)) {
     const like = `%${likeEsc(term)}%`;
     parts.push("(e.subject LIKE ? ESCAPE '\\' OR COALESCE(e.to_name,'') LIKE ? ESCAPE '\\' OR e.to_addr LIKE ? ESCAPE '\\')");

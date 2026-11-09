@@ -103,6 +103,15 @@ const f = R.findReply(thread, { sentId: "s", sentAt, own });
 check("findReply: skips you, bounces, drafts, spam and older mail; earliest reply wins", f && f.id === "r1" && f.addr === "sam@acme.com" && f.name === "Sam Lee" && f.at === 1200, f);
 check("findReply: none when only you wrote", R.findReply(thread.slice(0, 4), { sentId: "s", sentAt, own }) === null, "");
 
+// Bounce notices in the thread
+const withSubj = (m, s) => ({ ...m, payload: { headers: [...m.payload.headers, ...(/Failure|Undeliverable/.test(s) ? [{ name: "X-Failed-Recipients", value: "jane@acme.com" }] : [])] } });
+const daemon = "Mail Delivery Subsystem <mailer-daemon@googlemail.com>";
+const fb = R.findBounce([thread[0], withSubj(msg("b1", daemon, 1010), "Delivery Status Notification (Failure)")], { sentId: "s", sentAt });
+check("findBounce: Gmail's failure notice", fb && fb.id === "b1" && fb.at === 1010, fb);
+check("findBounce: a delay notice isn't a bounce", R.findBounce([withSubj(msg("b2", daemon, 1010), "Delivery Status Notification (Delay)")], { sentId: "s", sentAt }) === null, "");
+check("findBounce: a reply from a person isn't a bounce", R.findBounce([withSubj(msg("r", "Jane <jane@acme.com>", 1010), "Re: failed build")], { sentId: "s", sentAt }) === null, "");
+check("findBounce: a notice from before it was sent doesn't count", R.findBounce([withSubj(msg("b3", daemon, 900), "Undeliverable: hi")], { sentId: "s", sentAt }) === null, "");
+
 // ---- checking one email ----
 const e1 = newEmail(uid, "jane@acme.com", "Coffee?", 2 * H);
 calls = [];
@@ -111,8 +120,8 @@ check("no reply yet", r && r.replied === false && !row(e1.id).replied_at, r);
 check("thread looked up and remembered, check time saved", row(e1.id).reply_thread === e1.thread && row(e1.id).reply_checked > now() - 5, row(e1.id));
 const threadCalls = gmailCalls().filter(c => c.includes("/threads/"));
 const q = new URL("https://" + threadCalls[0].split(" ")[1]).searchParams;
-check("asks Gmail only for From and Date headers, and no snippets or bodies",
-  q.get("format") === "metadata" && JSON.stringify(q.getAll("metadataHeaders")) === '["From","Date"]'
+check("asks Gmail only for From, Date and X-Failed-Recipients headers, and no snippets or bodies",
+  q.get("format") === "metadata" && JSON.stringify(q.getAll("metadataHeaders")) === '["From","Date","X-Failed-Recipients"]'
   && /payload\/headers/.test(q.get("fields")) && !/snippet|body|raw/.test(q.get("fields")), threadCalls[0]);
 
 put("rep1", e1.thread, "Jane Doe <jane@acme.com>", now() - 60);

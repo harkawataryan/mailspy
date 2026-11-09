@@ -34,7 +34,7 @@ import { classifyAgent } from "./tracking.js";
 const ACTIVITY_SQL = `SELECT * FROM (
   SELECT v.id, v.kind, v.ts, v.geo, v.user_agent, v.is_bot, v.flagged, e.id AS email_id, e.to_addr, e.to_name, e.subject,
          NULL AS item_id, NULL AS title
-    FROM events v JOIN emails e ON e.id=v.email_id WHERE e.user_id=?1
+    FROM events v JOIN emails e ON e.id=v.email_id WHERE e.user_id=?1 AND e.bounced_at IS NULL
   UNION ALL
   SELECT dv.id, 'doc', dv.ts, dv.geo, dv.user_agent, dv.is_self, CASE WHEN dv.is_self THEN 'self' END, e.id, e.to_addr, e.to_name, e.subject,
          d.id, d.filename
@@ -526,14 +526,14 @@ async function handle(req, env, ctx) {
   // Emails list: ?q= search, ?status=, ?days=, ?page= (src/lists.js)
   if (path === "/" && method === "GET") {
     const filters = readFilters(url.searchParams);
-    if (filters.status === "replied") await ensureGoogleSchema(db);   // replied_at
+    await ensureGoogleSchema(db);   // replied_at, bounced_at
     const list = await emailListPage(db, uid, filters);
     const [totals, activity, reminders, maxA, week] = await db.batch([
-      db.prepare("SELECT COUNT(*) AS total, SUM(opens>0) AS opened, SUM(opens) AS opens, SUM(clicks) AS clicks FROM emails WHERE user_id=?").bind(uid),
+      db.prepare("SELECT COUNT(*) AS total, SUM(opens>0) AS opened, SUM(opens) AS opens, SUM(clicks) AS clicks FROM emails WHERE user_id=? AND bounced_at IS NULL").bind(uid),
       db.prepare(ACTIVITY_SQL).bind(uid, 30),
       db.prepare("SELECT * FROM alerts WHERE user_id=? AND kind IN ('reply','followup','spike','revived') ORDER BY id DESC LIMIT 6").bind(uid),
       db.prepare("SELECT COALESCE(MAX(id),0) AS m FROM alerts WHERE user_id=?").bind(uid),
-      db.prepare("SELECT COUNT(*) AS sent FROM emails WHERE user_id=? AND created_at>=?").bind(uid, now() - 7 * 86400),
+      db.prepare("SELECT COUNT(*) AS sent FROM emails WHERE user_id=? AND bounced_at IS NULL AND created_at>=?").bind(uid, now() - 7 * 86400),
     ]);
     return html(views.dashboard({
       user, cfg, prefs: await prefsFor(db, cfg, uid),
@@ -545,7 +545,7 @@ async function handle(req, env, ctx) {
   // ---- CSV downloads (signed-in only, this user's data only) ----
   if (path === "/emails.csv" && method === "GET") {
     const filters = readFilters(url.searchParams);
-    if (filters.status === "replied") await ensureGoogleSchema(db);   // replied_at
+    await ensureGoogleSchema(db);   // replied_at, bounced_at
     return emailsCsv(db, uid, filters);
   }
   m = path.match(/^\/email\/(\d+)\.csv$/);
@@ -616,8 +616,8 @@ async function handle(req, env, ctx) {
     const since = until - 7 * 86400;
     await ensureGoogleSchema(db);   // replied_at
     const [sent, opened, replied, replies, clicks, bots, top] = await db.batch([
-      db.prepare("SELECT COUNT(*) AS n FROM emails WHERE user_id=? AND created_at>=?").bind(uid, since),
-      db.prepare("SELECT COUNT(*) AS n FROM emails WHERE user_id=? AND created_at>=? AND opens>0").bind(uid, since),
+      db.prepare("SELECT COUNT(*) AS n FROM emails WHERE user_id=? AND bounced_at IS NULL AND created_at>=?").bind(uid, since),
+      db.prepare("SELECT COUNT(*) AS n FROM emails WHERE user_id=? AND bounced_at IS NULL AND created_at>=? AND opens>0").bind(uid, since),
       db.prepare("SELECT COUNT(*) AS n FROM emails WHERE user_id=? AND created_at>=? AND replied_at IS NOT NULL").bind(uid, since),
       db.prepare(`SELECT id, subject, to_addr, to_name, replied_at, replied_by FROM emails
                   WHERE user_id=? AND replied_at>=? ORDER BY replied_at DESC LIMIT 10`).bind(uid, since),

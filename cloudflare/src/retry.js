@@ -188,6 +188,7 @@ export async function advanceRetry(env, cfg, emailId) {
         stmts.push(db.prepare("UPDATE emails SET to_addr=?, gmail_msg=?, gmail_label=NULL, sent_clean=NULL WHERE id=?").bind(next, id, e.id));
       } else {
         r.state = "exhausted";
+        stmts.push(db.prepare("UPDATE emails SET bounced_at=? WHERE id=?").bind(t, e.id));
         stmts.push(alertStmt(db, e.id, "retry", `None of the ${r.cands.length} addresses for ${r.name || "this email"} worked. "${e.subject}" wasn't delivered.`, t, e.user_id));
       }
       // tidy up: the failed copy and the bounce notice go to Trash

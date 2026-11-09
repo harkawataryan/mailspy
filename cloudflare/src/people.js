@@ -56,10 +56,10 @@ const sql = {
       e.replied_at, e.replied_by, e.replied_addr,
       CASE WHEN json_valid(e.retry_json) THEN json_extract(e.retry_json, '$.name') END AS plan_name,
       (SELECT MAX(v.ts) FROM events v WHERE v.email_id=e.id AND v.kind='click' AND v.is_bot=0) AS last_click
-    FROM emails e WHERE e.user_id=?1`,
+    FROM emails e WHERE e.user_id=?1 AND e.bounced_at IS NULL`,
   // Genuine opens only: no scanners, prefetches, your own views, or anything flagged as automatic.
   opens: `SELECT v.email_id, v.ts FROM events v JOIN emails e ON e.id=v.email_id
-    WHERE e.user_id=?1 AND v.kind='open' AND v.is_bot=0 AND v.flagged IS NULL`,
+    WHERE e.user_id=?1 AND e.bounced_at IS NULL AND v.kind='open' AND v.is_bot=0 AND v.flagged IS NULL`,
 };
 
 // emails: rows from sql.emails, newest first. opens: rows from sql.opens.

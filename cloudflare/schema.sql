@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS emails (
   replied_by    TEXT,     -- who replied: their name, or their address
   replied_addr  TEXT,     -- who replied: their address
   reply_thread  TEXT,     -- Gmail thread id of the sent message (cache)
-  reply_checked REAL      -- last time the thread was checked
+  reply_checked REAL,     -- last time the thread was checked
+  bounced_at REAL         -- it bounced and no address worked: left out of the dashboard
 );
 CREATE INDEX IF NOT EXISTS idx_emails_followup ON emails(followup_done, opens, created_at);
 CREATE INDEX IF NOT EXISTS idx_emails_user ON emails(user_id, id);

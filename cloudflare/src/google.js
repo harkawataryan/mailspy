@@ -52,6 +52,7 @@ export async function ensureGoogleSchema(db) {
     ["emails", "replied_addr", "TEXT"],   // who replied: their address
     ["emails", "reply_thread", "TEXT"],   // Gmail thread id of gmail_msg (cached for reply checks)
     ["emails", "reply_checked", "REAL"],  // last time the thread was checked for a reply
+    ["emails", "bounced_at", "REAL"],     // when it bounced (no address worked): left out of the dashboard
   ];
   for (const [t, c, type] of cols) {
     try { await db.prepare(`ALTER TABLE ${t} ADD COLUMN ${c} ${type}`).run(); }

@@ -3,8 +3,9 @@
 // For tracked emails from the last 30 days with no reply yet, MailSpy looks at
 // the sent message's Gmail conversation (thread) for a message from someone
 // other than you, dated after you sent it. It asks Gmail for nothing but the
-// From and Date headers of those messages (plus Gmail's own SENT/DRAFT/SPAM
-// markers, to skip your own messages), never bodies or snippets.
+// From and Date headers of those messages, plus X-Failed-Recipients (only bounce
+// notices have it: a bounced email is left out of the dashboard) and Gmail's own
+// SENT/DRAFT/SPAM markers, to skip your own messages; never bodies or snippets.
 //
 // Runs from the 5-minute schedule (a few emails per run, the longest-unchecked
 // first, taking turns between people so nobody's emails starve), and on demand
@@ -23,7 +24,7 @@ const ALERT_DAYS = 3;                  // replies older than this when first see
 const RECENT = 3 * 86400;              // emails younger than this are checked every 10 minutes, older ones hourly
 const ON_DEMAND_GAP = 60;              // opening an email's page checks again after a minute
 const THREAD_FIELDS = "id,messages(id,labelIds,internalDate,payload/headers)";
-const THREAD_Q = `format=metadata&metadataHeaders=From&metadataHeaders=Date&fields=${encodeURIComponent(THREAD_FIELDS)}`;
+const THREAD_Q = `format=metadata&metadataHeaders=From&metadataHeaders=Date&metadataHeaders=X-Failed-Recipients&fields=${encodeURIComponent(THREAD_FIELDS)}`;
 const SKIP_LABELS = ["SENT", "DRAFT", "SPAM"];
 const DAEMON = /mailer-daemon|postmaster|mail delivery (subsystem|system)/i;
 
@@ -69,13 +70,23 @@ export function findReply(messages, { sentId, sentAt, own }) {
   return best;
 }
 
+// A delivery-failure notice in the thread, after it was sent. Gmail's failure notices
+// carry X-Failed-Recipients; its "delayed, will retry" ones don't.
+export function findBounce(messages, { sentId, sentAt }) {
+  for (const m of messages || []) {
+    if (!m || m.id === sentId || !DAEMON.test(header(m, "From"))) continue;
+    if (dateOf(m) > sentAt && header(m, "X-Failed-Recipients")) return { at: dateOf(m), id: m.id };
+  }
+  return null;
+}
+
 // Check one email's thread. budget (optional) counts Gmail requests: { used }.
 export async function checkReply(env, cfg, emailId, budget = { used: 0 }) {
   if (!googleEnabled(cfg)) return null;
   const db = env.DB;
   await ensureGoogleSchema(db);
   const e = await db.prepare(`SELECT e.id, e.user_id, e.to_addr, e.to_name, e.subject, e.created_at, e.scheduled_at,
-      e.gmail_msg, e.reply_thread, e.replied_at, u.gmail_token, u.gmail_email, u.email AS user_email
+      e.gmail_msg, e.reply_thread, e.replied_at, e.retry_json, e.bounced_at, u.gmail_token, u.gmail_email, u.email AS user_email
     FROM emails e JOIN users u ON u.id = e.user_id WHERE e.id=?`).bind(emailId).first();
   if (!e) return null;
   if (e.replied_at) return { replied: true };
@@ -100,7 +111,14 @@ export async function checkReply(env, cfg, emailId, budget = { used: 0 }) {
     const sentAt = (mine && dateOf(mine)) || sentRef(e);
     const own = new Set([e.user_email, e.gmail_email].filter(Boolean).map(s => String(s).toLowerCase()));
     const reply = findReply(msgs, { sentId: e.gmail_msg, sentAt, own });
-    if (!reply) { await checked(threadId); return { replied: false }; }
+    if (!reply) {
+      // Bounced (and auto-try isn't handling it): leave it out of the dashboard.
+      const trying = e.retry_json && /"state":"(watching|scheduled)"/.test(e.retry_json);
+      const b = !e.bounced_at && !trying && findBounce(msgs, { sentId: e.gmail_msg, sentAt });
+      if (b) await db.prepare("UPDATE emails SET bounced_at=? WHERE id=?").bind(b.at, e.id).run();
+      await checked(threadId);
+      return { replied: false, bounced: !!(b || e.bounced_at) };
+    }
     const who = reply.name || reply.addr;
     const r = await db.prepare(`UPDATE emails SET replied_at=?, replied_by=?, replied_addr=?, reply_thread=?, reply_checked=?
         WHERE id=? AND replied_at IS NULL`).bind(reply.at, who, reply.addr, threadId, t, e.id).run();
@@ -127,7 +145,7 @@ export async function sweepReplies(env, cfg) {
       SELECT e.id, e.user_id, COALESCE(e.reply_checked, 0) AS chk,
         ROW_NUMBER() OVER (PARTITION BY e.user_id ORDER BY COALESCE(e.reply_checked, 0), e.id DESC) AS rn
       FROM emails e JOIN users u ON u.id = e.user_id
-      WHERE u.gmail_token IS NOT NULL AND e.gmail_msg IS NOT NULL AND e.replied_at IS NULL
+      WHERE u.gmail_token IS NOT NULL AND e.gmail_msg IS NOT NULL AND e.replied_at IS NULL AND e.bounced_at IS NULL
         AND COALESCE(NULLIF(e.scheduled_at, -1), e.created_at) > ?1
         AND (e.scheduled_at IS NULL OR e.scheduled_at <= ?2)
         AND COALESCE(e.reply_checked, 0) < ?2 - CASE WHEN e.created_at > ?2 - ?3 THEN 600 ELSE 3600 END
