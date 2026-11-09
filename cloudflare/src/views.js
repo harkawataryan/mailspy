@@ -1310,14 +1310,14 @@ function peopleTable(people, companyName = null) {
     return `<tr class="row" data-href="${personHref(p.addr)}" data-q="${esc(`${p.name} ${p.addr} ${companyName ? companyName(p) : ""}`.toLowerCase())}">
       <td data-sort="${esc((p.name || p.addr).toLowerCase())}"><div class="t1">${esc(p.name || p.addr)}</div>${sub ? `<div class="t2">${esc(sub)}</div>` : ""}</td>
       <td class="r num" data-sort="${p.sent}">${p.sent}</td>
-      <td class="r num" data-sort="${p.opened}">${zero(p.opened)}</td>
-      <td class="r num" data-sort="${p.clicked}">${zero(p.clicked)}</td>
+      <td class="r num" data-sort="${p.open_count}"${p.open_count ? ` title="${p.open_count} open${p.open_count === 1 ? "" : "s"} across ${p.opened} of ${p.sent} email${p.sent === 1 ? "" : "s"}"` : ""}>${zero(p.open_count)}</td>
+      <td class="r num" data-sort="${p.click_count}"${p.click_count ? ` title="${p.click_count} click${p.click_count === 1 ? "" : "s"} across ${p.clicked} of ${p.sent} email${p.sent === 1 ? "" : "s"}"` : ""}>${zero(p.click_count)}</td>
       <td class="r num" data-sort="${p.replied}">${p.replied ? `<span class="st reply">${p.replied}</span>` : zero(0)}</td>
       ${agoCell(p.last_contact)}${agoCell(p.last_activity)}
       <td class="r time" data-sort="-1" data-opens="${opensAttr(p)}">—</td></tr>`;
   }).join("");
-  return `<div style="overflow-x:auto"><table class="sortable"><thead><tr>${sortTh("Person", "text", "")}${sortTh("Emails")}${sortTh("Opened")}
-      ${sortTh("Clicked")}${sortTh("Replied")}${sortTh("Last contact")}${sortTh("Last activity")}${sortTh("Usually opens")}</tr></thead>
+  return `<div style="overflow-x:auto"><table class="sortable"><thead><tr>${sortTh("Person", "text", "")}${sortTh("Emails")}${sortTh("Opens")}
+      ${sortTh("Clicks")}${sortTh("Replied")}${sortTh("Last contact")}${sortTh("Last activity")}${sortTh("Usually opens")}</tr></thead>
     <tbody>${rows}</tbody></table><div class="empty" id="none" hidden>Nobody matches.</div></div>`;
 }
 

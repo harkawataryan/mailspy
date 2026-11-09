@@ -75,6 +75,7 @@ const by = Object.fromEntries(people.map(p => [p.addr, p]));
 const jane = by["jane@stripe.com"];
 check("one row per person, addresses case-insensitive, only your emails", people.length === 5 && jane && jane.sent === 2, people.map(p => [p.addr, p.sent]));
 check("totals: opened, clicked, replied", jane.opened === 1 && jane.replied === 1 && by["sam@eu.stripe.com"].clicked === 1, jane);
+check("every open counted, not just which emails were opened (Opens column)", jane.open_count === 3 && jane.opened === 1 && by["sam@eu.stripe.com"].click_count === 1, jane);
 check("name from whoever replied, the auto-try plan, or what you typed", jane.name === "Jane Doe" && by["sam@eu.stripe.com"].name === "Sam Lee" && by["kim@figma.com"].name === "Kim Park" && by["bob@outlook.com"].name === "", people.map(p => p.name));
 check("last contact = your latest email, last activity = their latest open/click/reply",
   Math.abs(jane.last_contact - (now() - 2 * D)) < 5 && Math.abs(jane.last_activity - (now() - D)) < 5 && Math.abs(by["sam@eu.stripe.com"].last_activity - (now() - 2 * D)) < 5, jane);

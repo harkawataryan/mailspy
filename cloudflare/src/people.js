@@ -73,7 +73,7 @@ export function groupPeople(emails, opens = []) {
     if (!p) {
       const domain = domainOf(addr);
       p = { addr, name: "", domain, org: orgDomain(domain), personal: isPersonal(domain),
-            sent: 0, opened: 0, clicked: 0, replied: 0, last_contact: 0, last_activity: 0, opens: [] };
+            sent: 0, opened: 0, clicked: 0, replied: 0, open_count: 0, click_count: 0, last_contact: 0, last_activity: 0, opens: [] };
       people.set(addr, p);
     }
     const replier = e.replied_addr === addr && e.replied_by && e.replied_by !== addr ? e.replied_by : "";
@@ -81,6 +81,8 @@ export function groupPeople(emails, opens = []) {
     p.sent++;
     if (e.opens > 0) p.opened++;
     if (e.clicks > 0) p.clicked++;
+    p.open_count += e.opens || 0;          // every open, not just which emails were opened
+    p.click_count += e.clicks || 0;
     if (e.replied_at) p.replied++;
     const s = sentRef(e);
     if (s > 0 && s <= t) p.last_contact = Math.max(p.last_contact, s);
