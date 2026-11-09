@@ -172,5 +172,26 @@ check("trackQueuedLinks: link recorded for this email, draft points at it", kai.
 tl = await SL.trackQueuedLinks(env, cfg, 1, "https://go.aryanh.dev");
 check("trackQueuedLinks again: no new links, draft not rewritten", tl.results.find(r => r.to === "kai@links.com").links === 0 && sqlite.prepare("SELECT COUNT(*) n FROM links").get().n === 1, tl);
 
+// ---- a draft made outside Gmail compose: no tracking image yet, so one is added
+const NRAW = RAW.replace(qp(html), qp(lhtml.replace(/<img[^>]*>/, ""))).replace(/jane@acme\.com/g, "noa@new.com");
+check("test setup: draft without a pixel", !/LINKTOK1/.test(decodeQp(NRAW.split('quoted-printable\r\n\r\n')[1].split("\r\n--ALT--")[0])), "");
+drafts.set("d10", { to: "noa@new.com", raw: NRAW });
+await SL.queueDrafts(env, cfg, 1, ["noa@new.com"], at + 9999);
+tl = await SL.trackQueuedLinks(env, cfg, 1, "https://go.aryanh.dev");
+const noa = sqlite.prepare("SELECT id, token, scheduled_at, subject FROM emails WHERE to_addr='noa@new.com'").all();
+const d10 = decodeQp(drafts.get("d10").raw.split('quoted-printable\r\n\r\n')[1].split("\r\n--ALT--")[0]);
+check("no pixel: email recorded (send time, subject) and its image added to the draft", noa.length === 1 && noa[0].scheduled_at === at + 9999 && noa[0].subject === "Stripe Intern interested in Acme (Summer 2027)" && d10.includes(`/img/${noa[0].token}.gif`), [noa, d10]);
+check("no pixel: links tracked against the new email, pdf kept", tl.results.find(r => r.to === "noa@new.com").links === 1 && sqlite.prepare("SELECT COUNT(*) n FROM links WHERE email_id=?").get(noa[0].id).n === 1 && drafts.get("d10").raw.includes(PDF), tl);
+await SL.trackQueuedLinks(env, cfg, 1, "https://go.aryanh.dev");
+check("no pixel: running again adds no second email", sqlite.prepare("SELECT COUNT(*) n FROM emails WHERE to_addr='noa@new.com'").get().n === 1, "");
+
+// ---- draftMime: a new draft (text + HTML + copied PDF) that the rest of Send later can work on
+const PDFBIN = atob(PDF);
+const DM = SL.draftMime({ to: "ray@waymo.com", subject: "Stripe Intern interested in Waymo (Summer 2027)", text: "Hi Ray,\n\nI'm Aryan.", html: "<div>Hi Ray,<br><br>I'm Aryan. <a href=\"https://aryanh.dev\">aryanh.dev</a></div>", files: [{ name: "r.pdf", type: "application/pdf", bin: PDFBIN }] });
+const dmPx = SL.addPixel(DM, "https://go.aryanh.dev");
+check("draftMime: headers, both parts and the attachment", DM.startsWith("To: ray@waymo.com\r\nSubject: Stripe Intern interested in Waymo (Summer 2027)") && /multipart\/mixed/.test(DM) && /filename="r\.pdf"/.test(DM) && DM.replace(/\r\n/g, "").includes(PDF.replace(/=+$/, "").slice(0, 40)), DM.slice(0, 300));
+check("draftMime: tracking image goes into the HTML only, attachment kept", dmPx && /\/img\/[A-Za-z0-9_-]+\.gif/.test(atob(dmPx.raw.split('text/html; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n')[1].split("\r\n--")[0].replace(/\r\n/g, ""))) && dmPx.raw.includes('filename="r.pdf"'), "");
+check("draftMime: edits work on it (apostrophes too)", SL.editRaw(DM, [["I'm Aryan.", "I'm Aryan Harkawat."]]).hits === 2, "");
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 if (results.some(r => !r)) process.exit(1);

@@ -17,7 +17,7 @@
 // before the API call; a claim left over from an interrupted run is only retried
 // after checking the draft still exists (if it's gone, it was sent).
 
-import { now, shortCode } from "./util.js";
+import { now, shortCode, randomToken } from "./util.js";
 import { ensureGoogleSchema, accessToken, gmail } from "./google.js";
 import { rewrite, b64urlToBin, binToB64url } from "./sentcopy.js";
 import { alertStmt } from "./tracking.js";
@@ -111,26 +111,50 @@ export function linkRaw(raw, base, track) {
   return { raw: out === null ? raw : out, token, changed: out !== null };
 }
 
+// The raw message with a new open pixel at the end of its HTML part, or null if it has none.
+export function addPixel(raw, base) {
+  const NL = raw.includes("\r\n") ? "\r\n" : "\n";
+  const token = randomToken(12);
+  const img = `<img src="${base.replace(/\/$/, "")}/img/${token}.gif" width="1" height="1" alt="" ` +
+    `style="display:block;width:1px;height:1px;border:0;opacity:0">`;
+  let done = false;
+  const out = rewrite(raw, NL, (text, type) => {
+    if (type !== "text/html" || done) return text;
+    done = true;
+    return /<\/body>/i.test(text) ? text.replace(/<\/body>/i, img + "</body>") : text + img;
+  }, 0, ["text/plain", "text/html"]);
+  return done && out !== null ? { raw: out, token } : null;
+}
+
 // Track the links in queued drafts, a page at a time. Each draft's open pixel says
 // which email it is; its links are recorded against that email like any tracked link.
 export async function trackQueuedLinks(env, cfg, uid, base, after = 0, limit = 15) {
   await ensureSendSchema(env.DB);
   const token = await tokenFor(env, cfg, uid);
   if (!token) return { error: "Connect Gmail first." };
-  const rows = (await env.DB.prepare("SELECT id, draft_id, to_addr FROM send_queue WHERE user_id=? AND state='queued' AND id>? ORDER BY id LIMIT ?")
+  const rows = (await env.DB.prepare("SELECT id, draft_id, to_addr, subject, send_at FROM send_queue WHERE user_id=? AND state='queued' AND id>? ORDER BY id LIMIT ?")
     .bind(uid, after, limit).all()).results;
   const results = [];
   for (const r of rows) {
     try {
       const d = await gmail(token, `/drafts/${r.draft_id}?format=raw`);
       if (!d || !d.message) { results.push({ to: r.to_addr, error: "draft not found" }); continue; }
-      const raw = b64urlToBin(d.message.raw);
+      let raw = b64urlToBin(d.message.raw);
       const px = linkRaw(raw, base, u => u).token;    // dry run: find the email first
-      const email = px && await env.DB.prepare("SELECT id FROM emails WHERE token=? AND user_id=?").bind(px, uid).first();
+      let email = px && await env.DB.prepare("SELECT id FROM emails WHERE token=? AND user_id=?").bind(px, uid).first();
+      if (!email && !px) {
+        // A draft made outside Gmail compose (no tracking image yet): record it and add one.
+        const withPx = addPixel(raw, base);
+        if (!withPx) { results.push({ to: r.to_addr, error: "no HTML part to add tracking to" }); continue; }
+        const ins = await env.DB.prepare("INSERT INTO emails(token,to_addr,subject,created_at,scheduled_at,user_id) VALUES(?,?,?,?,?,?)")
+          .bind(withPx.token, r.to_addr, r.subject || "(no subject)", now(), r.send_at, uid).run();
+        email = { id: ins.meta.last_row_id };
+        raw = withPx.raw;
+      }
       if (!email) { results.push({ to: r.to_addr, error: "no MailSpy pixel in this draft" }); continue; }
       const codes = new Map();
       const res = linkRaw(raw, base, u => { if (!codes.has(u)) codes.set(u, shortCode(7)); return base.replace(/\/$/, "") + "/" + codes.get(u); });
-      if (!res.changed) { results.push({ to: r.to_addr, links: 0 }); continue; }
+      if (!res.changed && raw === b64urlToBin(d.message.raw)) { results.push({ to: r.to_addr, links: 0 }); continue; }
       if (codes.size) await env.DB.batch([...codes].map(([u, c]) => env.DB.prepare("INSERT INTO links(email_id,token,url) VALUES(?,?,?)").bind(email.id, c, u)));
       await gmail(token, `/drafts/${r.draft_id}`, { method: "PUT", body: JSON.stringify({ id: r.draft_id, message: { raw: binToB64url(res.raw), threadId: d.message.threadId } }) });
       results.push({ to: r.to_addr, links: codes.size, urls: [...codes.keys()] });
@@ -165,6 +189,56 @@ export async function queueDrafts(env, cfg, uid, to, at) {
     } catch (e) { out.push({ to: addr, error: String(e.message || e).slice(0, 200) }); }
   }
   return { queued: out.filter(r => r.draft).length, results: out };
+}
+
+// ------------------------------------------------------------------ new drafts
+// Make a Gmail draft (plain text + HTML), with the PDF attachments copied from one of
+// the user's own messages (attach_from: its Gmail id), so a resume doesn't have to be
+// uploaded again. Queue it afterwards like any draft; trackQueuedLinks adds tracking.
+const utf8 = s => unescape(encodeURIComponent(s));          // to a UTF-8 binary string
+const b64lines = bin => btoa(bin).replace(/.{76}/g, "$&\r\n");
+const encWord = s => /^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${btoa(utf8(s))}?=`;
+function pdfParts(p, out = []) {
+  if (p.filename && p.body && p.body.attachmentId) out.push(p);
+  for (const c of p.parts || []) pdfParts(c, out);
+  return out;
+}
+export function draftMime({ to, subject, text, html, files = [] }) {
+  const alt = "ALT_" + shortCode(12), mix = "MIX_" + shortCode(12);
+  const L = [`To: ${to}`, `Subject: ${encWord(subject)}`, "MIME-Version: 1.0"];
+  const altPart = [`Content-Type: multipart/alternative; boundary="${alt}"`, "",
+    `--${alt}`, 'Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: base64", "", b64lines(utf8(text)),
+    `--${alt}`, 'Content-Type: text/html; charset="UTF-8"', "Content-Transfer-Encoding: base64", "", b64lines(utf8(html)),
+    `--${alt}--`];
+  if (!files.length) return [...L, ...altPart].join("\r\n");
+  const out = [...L, `Content-Type: multipart/mixed; boundary="${mix}"`, "", `--${mix}`, ...altPart];
+  for (const f of files) {
+    out.push(`--${mix}`, `Content-Type: ${f.type}; name="${f.name}"`, `Content-Disposition: attachment; filename="${f.name}"`,
+      "Content-Transfer-Encoding: base64", "", b64lines(f.bin));
+  }
+  out.push(`--${mix}--`);
+  return out.join("\r\n");
+}
+export async function makeDraft(env, cfg, uid, d) {
+  const to = String(d.to || "").trim().toLowerCase();
+  if (!/^[^\s@<>,]+@[^\s@<>,]+\.[a-z]{2,}$/i.test(to)) return { error: "Give one plain email address." };
+  if (!String(d.text || "").trim() || !String(d.html || "").trim()) return { error: "Give the text and the HTML." };
+  const token = await tokenFor(env, cfg, uid);
+  if (!token) return { error: "Connect Gmail first." };
+  const files = [];
+  if (d.attach_from) {
+    const id = String(d.attach_from).replace(/[^A-Za-z0-9]/g, "");
+    const m = await gmail(token, `/messages/${id}?format=full`);
+    if (!m) return { error: "That message wasn't found." };
+    for (const p of pdfParts(m.payload || {})) {
+      const a = await gmail(token, `/messages/${id}/attachments/${p.body.attachmentId}`);
+      if (a && a.data) files.push({ name: p.filename.replace(/["\r\n]/g, ""), type: p.mimeType || "application/octet-stream", bin: b64urlToBin(a.data) });
+    }
+    if (!files.length) return { error: "That message has no attachments." };
+  }
+  const raw = draftMime({ to, subject: String(d.subject || ""), text: String(d.text), html: String(d.html), files });
+  const r = await gmail(token, "/drafts", { method: "POST", body: JSON.stringify({ message: { raw: binToB64url(raw) } }) });
+  return { draft: r && r.id, to, attachments: files.map(f => f.name) };
 }
 
 export async function listQueue(db, uid) {

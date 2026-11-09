@@ -12,7 +12,7 @@ import { sessionUser, apiUser, checkPassword, hashPassword, makeSession, session
 import { PIXEL_GIF, prepareEmail, recordEvent, markSelfView, markScheduled, runScheduled, placeOf, settledAlerts } from "./tracking.js";
 import { hideTracking, sweepSentCopies } from "./sentcopy.js";
 import { domainsEnabled, ensureDomainSchema, userDomain, userTrackBase, isUserDomain, setDomain, refreshDomain, removeDomain, checkPendingDomains } from "./domains.js";
-import { queueDrafts, listQueue, cancelQueued, editQueued, trackQueuedLinks, sendDue } from "./sendlater.js";
+import { queueDrafts, listQueue, cancelQueued, editQueued, trackQueuedLinks, sendDue, makeDraft } from "./sendlater.js";
 import * as views from "./views.js";
 import { prefsFor, prefsFromForm, accountAllowed, trackedAccounts } from "./prefs.js";
 import { findPerson, findRecruiters, liRole } from "./finder.js";
@@ -416,6 +416,10 @@ async function handle(req, env, ctx) {
     if (path === "/api/sendlater/queue" && method === "POST") {
       const b = await readBody(req);
       return json(await queueDrafts(env, cfg, uid, Array.isArray(b.to) ? b.to : [], Number(b.at)));
+    }
+    if (path === "/api/sendlater/draft" && method === "POST") {
+      const out = await makeDraft(env, cfg, uid, await readBody(req));
+      return json(out, out.error ? 400 : 200);
     }
     if (path === "/api/sendlater/edit" && method === "POST") {
       const b = await readBody(req);
