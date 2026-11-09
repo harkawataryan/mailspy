@@ -206,6 +206,17 @@ export async function editQueued(env, cfg, uid, replace, after = 0, limit = 15) 
 }
 
 // ------------------------------------------------------------------ send
+// The tracked email was registered when the draft was written, maybe days ago.
+// Record when it really goes out, so the hits that come right after sending
+// (Google's own scan of outgoing mail, link scanners, bounce processing) fall in
+// the "just sent" window and aren't counted as the recipient opening it.
+async function markSendTime(db, q, t) {
+  const rows = (await db.prepare("SELECT id, subject FROM emails WHERE user_id=? AND lower(to_addr)=lower(?) ORDER BY id DESC LIMIT 5")
+    .bind(q.user_id, q.to_addr).all()).results;
+  const e = rows.find(r => r.subject === q.subject) || (rows.length === 1 ? rows[0] : null);
+  if (e) await db.prepare("UPDATE emails SET scheduled_at=? WHERE id=?").bind(t, e.id).run();
+}
+
 export async function sendDue(env, cfg, t = now()) {
   const db = env.DB;
   await ensureSendSchema(db);
@@ -226,6 +237,7 @@ export async function sendDue(env, cfg, t = now()) {
     try {
       const token = await tokenFor(env, cfg, q.user_id);
       if (!token) throw new Error("Gmail isn't connected");
+      await markSendTime(db, q, now());
       const msg = await gmail(token, "/drafts/send", { method: "POST", body: JSON.stringify({ id: q.draft_id }) });
       if (msg === null) {                                    // the draft was deleted (or already sent by hand)
         await db.prepare("UPDATE send_queue SET state='cancelled', error='draft no longer exists' WHERE id=?").bind(q.id).run();

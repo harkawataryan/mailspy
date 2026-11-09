@@ -108,12 +108,15 @@ check("running the same edit again changes nothing (no update calls)", e2.result
 check("non-ASCII replacements refused", /ASCII/.test((await SL.editQueued(env, cfg, 1, [["a", "π"]])).error || ""), "");
 
 // ---- send
+sqlite.prepare("INSERT INTO emails (token, to_addr, subject, created_at, user_id) VALUES ('TOKEN123', 'Jane@acme.com', 'Stripe Intern interested in Acme (Summer 2027)', 1000, 1)").run();
 let s = await SL.sendDue(env, cfg, now());
 check("nothing sent before its time", s.sent === 0 && drafts.has("d1") && drafts.has("d2"), s);
 await SL.cancelQueued(db, 1, [(await SL.listQueue(db, 1)).find(r => r.to_addr === "bob@beta.com").id]);
 s = await SL.sendDue(env, cfg, at + 1);
 const rows = await SL.listQueue(db, 1);
 check("due draft sent with drafts.send, marked sent", s.sent === 1 && !drafts.has("d1") && rows.find(r => r.to_addr === "jane@acme.com").state === "sent" && rows.find(r => r.to_addr === "jane@acme.com").sent_msg === "sent-d1", rows);
+const sentAt = sqlite.prepare("SELECT scheduled_at FROM emails WHERE token='TOKEN123'").get().scheduled_at;
+check("the tracked email's send time is when it really went out (not when it was drafted)", sentAt >= now() - 5, sentAt);
 check("cancelled draft not sent, still in Drafts", drafts.has("d2") && rows.find(r => r.to_addr === "bob@beta.com").state === "cancelled", rows);
 s = await SL.sendDue(env, cfg, at + 400);
 check("a sent draft is never sent again", s.due === 0, s);
