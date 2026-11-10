@@ -32,7 +32,7 @@ No card is needed.
 ## 2. Install and sign in (3 min)
 
 ```powershell
-cd "$HOME\Documents\Claude Projects\mailspy\cloudflare"
+cd mailspy\cloudflare
 ```
 
 ```powershell

@@ -1,4 +1,4 @@
-// Scheduled-email editor for Gmail. Pasted into Gmail tabs by Claude (in-page JavaScript) to change many
+// Scheduled-email editor for Gmail. Pasted into Gmail tabs (in-page JavaScript) to change many
 // scheduled emails quickly: each email is cancelled, edited, made sure it's tracked by
 // MailSpy once, and scheduled again for the same "Last scheduled time".
 //
