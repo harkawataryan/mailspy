@@ -54,10 +54,11 @@ globalThis.fetch = async (url, opts = {}) => {
     if (path === "/messages") {
       const q = u.searchParams.get("q");
       const to = (q.match(/to:(\S+)/) || [])[1];
-      return J({ messages: Object.values(gm.msgs).filter(m => m.to === to).map(m => ({ id: m.id })) });
+      return J({ messages: Object.values(gm.msgs).filter(m => !to || m.to === to).map(m => ({ id: m.id })) });
     }
     let m = path.match(/^\/messages\/([^/]+)$/);
-    if (m) { const msg = gm.msgs[m[1]]; return msg ? J({ id: msg.id, internalDate: String(msg.date * 1000), payload: { headers: [{ name: "Subject", value: msg.subject }] } }) : J({}, 404); }
+    if (m) { const msg = gm.msgs[m[1]]; return msg ? J({ id: msg.id, internalDate: String(msg.date * 1000), payload: { headers: [{ name: "Subject", value: msg.subject }, { name: "To", value: `Someone <${msg.to}>` }],
+      parts: [{ mimeType: "text/plain", body: { data: "eA" } }, { mimeType: "text/html", body: { data: Buffer.from(msg.html || "<p>hi</p>").toString("base64url") } }] } }) : J({}, 404); }
     m = path.match(/^\/messages\/([^/]+)\/modify$/);
     if (m) {
       const msg = gm.msgs[m[1]]; if (!msg) return J({}, 404);
@@ -140,6 +141,22 @@ const e4 = mk("dan@w.com", "Later", t, 0, t + 3600);
 gm.calls = [];
 await G.sweepLabels(env, cfg);
 check("future scheduled email not touched", !gm.calls.some(c => c.includes("dan@w.com")), gm.calls);
+
+// an inline reply tracked with no recipient or subject: matched by its tracking token
+// (not just the send time), and To / Subject filled in from Gmail
+const tokB = "TOKblank1234abcd";
+const e6 = Number(sqlite.prepare("INSERT INTO emails(token,to_addr,subject,created_at,opens,user_id) VALUES(?,?,?,?,0,?)")
+  .run(tokB, "", "(no subject)", t - 20, uid).lastInsertRowid);
+gm.msgs.m6x = { id: "m6x", to: "nope@q.com", subject: "Unrelated", date: t - 19, html: "<p>other</p>" };
+gm.msgs.m6 = { id: "m6", to: "bia@g.com", subject: "Re: Call scheduled", date: t - 18, html: `<p>Confirmed!</p><img src="https://go.x/o/${tokB}.gif">` };
+await G.labelEmail(env, cfg, e6);
+const r6 = sqlite.prepare("SELECT to_addr, subject, gmail_msg FROM emails WHERE id=?").get(e6);
+check("blank-recipient email: found by token, To and Subject filled in", r6.gmail_msg === "m6" && r6.to_addr === "bia@g.com" && r6.subject === "Re: Call scheduled", r6);
+const e7 = Number(sqlite.prepare("INSERT INTO emails(token,to_addr,subject,created_at,opens,user_id) VALUES(?,?,?,?,0,?)")
+  .run("TOKmissing99999x", "", "(no subject)", t - 20, uid).lastInsertRowid);
+await G.labelEmail(env, cfg, e7);
+check("blank-recipient email with no token match: not tied to some other message", !sqlite.prepare("SELECT gmail_msg FROM emails WHERE id=?").get(e7).gmail_msg, "");
+delete gm.msgs.m6; delete gm.msgs.m6x;
 
 // access removed in Google: stop and say so
 gm.invalidGrant = true;

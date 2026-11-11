@@ -203,6 +203,32 @@ async function labelIds(db, token, user) {
 
 const norm = s => String(s || "").replace(/^\s*((re|fw|fwd)\s*:\s*)+/i, "").trim().toLowerCase();
 
+// An email tracked without its recipient (an inline reply, where Gmail shows the
+// recipients collapsed and has no subject box): find the sent message by the
+// tracking token in its HTML, never by send time alone, and read To and Subject
+// from it. Returns { id, to, subject } or null.
+const hdr = (msg, name) => (((msg.payload && msg.payload.headers) || []).find(h => h.name.toLowerCase() === name) || {}).value || "";
+function htmlOf(part) {
+  if (!part) return "";
+  if (/^text\/html/i.test(part.mimeType || "") && part.body && part.body.data) {
+    try { return atob(part.body.data.replace(/-/g, "+").replace(/_/g, "/")); } catch { return ""; }
+  }
+  return (part.parts || []).map(htmlOf).join("");
+}
+export async function findSentByToken(token, e) {
+  if (!e.token) return null;
+  const sent = e.scheduled_at && e.scheduled_at > 0 ? e.scheduled_at : e.created_at;
+  const q = `in:sent after:${Math.floor(sent) - 300} before:${Math.floor(sent) + 3600}`;
+  const list = await gmail(token, `/messages?maxResults=10&q=${encodeURIComponent(q)}`);
+  for (const m of (list && list.messages) || []) {
+    const msg = await gmail(token, `/messages/${m.id}?format=full`);
+    if (!msg || !htmlOf(msg.payload).includes(e.token)) continue;
+    const to = (hdr(msg, "to").match(/[^\s,<>;"']+@[^\s,<>;"']+/) || [""])[0].toLowerCase();
+    return { id: msg.id, to, subject: hdr(msg, "subject") || "(no subject)" };
+  }
+  return null;
+}
+
 // The sent message for a tracked email: same recipient, around the send time, same subject.
 export async function findSent(token, e) {
   const sent = e.scheduled_at && e.scheduled_at > 0 ? e.scheduled_at : e.created_at;
@@ -228,7 +254,7 @@ export async function labelEmail(env, cfg, emailId) {
   if (!googleEnabled(cfg)) return;
   const db = env.DB;
   await ensureGoogleSchema(db);
-  const e = await db.prepare(`SELECT e.id, e.to_addr, e.subject, e.created_at, e.scheduled_at, e.opens, e.clicks,
+  const e = await db.prepare(`SELECT e.id, e.token, e.to_addr, e.subject, e.created_at, e.scheduled_at, e.opens, e.clicks,
       e.gmail_msg, e.gmail_label, u.id AS uid, u.gmail_token, u.gmail_labels
     FROM emails e JOIN users u ON u.id = e.user_id WHERE e.id=?`).bind(emailId).first();
   if (!e || !e.gmail_token || e.gmail_label === "nomatch") return;
@@ -240,7 +266,13 @@ export async function labelEmail(env, cfg, emailId) {
   try {
     let msg = e.gmail_msg;
     if (!msg) {
-      msg = await findSent(token, e);
+      if (!String(e.to_addr || "").trim()) {
+        const f = await findSentByToken(token, e);
+        if (f) {
+          msg = f.id;
+          await db.prepare("UPDATE emails SET to_addr=?, subject=? WHERE id=?").bind(f.to, f.subject, e.id).run();
+        }
+      } else msg = await findSent(token, e);
       if (!msg) {
         // Not in Sent yet (still sending, or scheduled). Give up after a day.
         const sent = e.scheduled_at && e.scheduled_at > 0 ? e.scheduled_at : e.created_at;
