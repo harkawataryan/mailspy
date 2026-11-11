@@ -198,6 +198,12 @@ const dmPx = SL.addPixel(DM, "https://go.aryanh.dev");
 check("draftMime: headers, both parts and the attachment", DM.startsWith("To: ray@waymo.com\r\nSubject: Stripe Intern interested in Waymo (Summer 2027)") && /multipart\/mixed/.test(DM) && /filename="r\.pdf"/.test(DM) && DM.replace(/\r\n/g, "").includes(PDF.replace(/=+$/, "").slice(0, 40)), DM.slice(0, 300));
 check("draftMime: tracking image goes into the HTML only, attachment kept", dmPx && /\/img\/[A-Za-z0-9_-]+\.gif/.test(atob(dmPx.raw.split('text/html; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n')[1].split("\r\n--")[0].replace(/\r\n/g, ""))) && dmPx.raw.includes('filename="r.pdf"'), "");
 check("draftMime: edits work on it (apostrophes too)", SL.editRaw(DM, [["I'm Aryan.", "I'm Aryan Harkawat."]]).hits === 2, "");
+const DM2 = SL.draftMime({ to: "a@b.com", subject: "s", text: "see aryanh.dev)", html: "<div>see aryanh.dev)</div>" });
+const lk = SL.editRaw(DM2, [["see aryanh.dev)", "see aryanh.dev)", "https://aryanh.dev"]]);
+const lkHtml = atob(lk.raw.split('text/html; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n')[1].split("\r\n--")[0].replace(/\r\n/g, ""));
+const lkText = atob(lk.raw.split('text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n')[1].split("\r\n--")[0].replace(/\r\n/g, ""));
+check("edit with a url: link in the HTML only, then link tracking picks it up", lk.hits === 2 && lkHtml.includes('<a href="https://aryanh.dev">see aryanh.dev)</a>') && lkText === "see aryanh.dev)" &&
+  SL.linkRaw(lk.raw, "https://go.x.dev", () => "https://go.x.dev/abc").changed, lkHtml);
 
 // ---- makeDraft with a file sent in the request (a resume that isn't in Gmail yet)
 const up = await SL.makeDraft(env, cfg, 1, { to: "kim@mercor.com", subject: "Hi", text: "Hi Kim", html: "<div>Hi Kim</div>",

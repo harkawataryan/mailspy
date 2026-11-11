@@ -65,8 +65,14 @@ function phraseRe(from, html) {
 export function editText(text, type, replace) {
   const html = type === "text/html";
   let out = text, hits = 0;
-  for (const [from, to] of replace) {
-    out = out.replace(phraseRe(from, html), () => { hits++; return html ? htmlEsc(to).replace(/'/g, "&#39;") : to; });
+  // [from, to] or [from, to, url]: with a url, the HTML part gets `to` as a link to it
+  for (const [from, to, url] of replace) {
+    out = out.replace(phraseRe(from, html), () => {
+      hits++;
+      if (!html) return to;
+      const t = htmlEsc(to).replace(/'/g, "&#39;");
+      return url ? `<a href="${htmlEsc(url)}">${t}</a>` : t;
+    });
   }
   return { out, hits };
 }
@@ -268,9 +274,11 @@ export async function cancelQueued(db, uid, ids) {
 // Edit queued drafts, a page at a time (2 Gmail calls each). after: last queue id done.
 export async function editQueued(env, cfg, uid, replace, after = 0, limit = 15) {
   await ensureSendSchema(env.DB);
-  const pairs = (replace || []).filter(p => Array.isArray(p) && p.length === 2 && String(p[0]).trim()).map(([a, b]) => [String(a), String(b)]);
+  const pairs = (replace || []).filter(p => Array.isArray(p) && (p.length === 2 || p.length === 3) && String(p[0]).trim())
+    .map(([a, b, u]) => u === undefined ? [String(a), String(b)] : [String(a), String(b), String(u)]);
   if (!pairs.length) return { error: "Nothing to replace." };
-  if (pairs.some(([a, b]) => /[^\x20-\x7e]/.test(a + b))) return { error: "Plain ASCII text only." };
+  if (pairs.some(([a, b, u = ""]) => /[^\x20-\x7e]/.test(a + b + u))) return { error: "Plain ASCII text only." };
+  if (pairs.some(([, , u]) => u !== undefined && !/^https?:\/\/[^\s"'<>]+$/i.test(u))) return { error: "A link must be a plain http(s) address." };
   const token = await tokenFor(env, cfg, uid);
   if (!token) return { error: "Connect Gmail first." };
   const rows = (await env.DB.prepare("SELECT id, draft_id, to_addr FROM send_queue WHERE user_id=? AND state='queued' AND id>? ORDER BY id LIMIT ?")
