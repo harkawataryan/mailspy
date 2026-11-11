@@ -204,6 +204,9 @@ const lkHtml = atob(lk.raw.split('text/html; charset="UTF-8"\r\nContent-Transfer
 const lkText = atob(lk.raw.split('text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n')[1].split("\r\n--")[0].replace(/\r\n/g, ""));
 check("edit with a url: link in the HTML only, then link tracking picks it up", lk.hits === 2 && lkHtml.includes('<a href="https://aryanh.dev">see aryanh.dev)</a>') && lkText === "see aryanh.dev)" &&
   SL.linkRaw(lk.raw, "https://go.x.dev", () => "https://go.x.dev/abc").changed, lkHtml);
+const fx = SL.editRaw(lk.raw, [['">see aryanh.dev)</a>', '">aryanh.dev</a>)', "html"], ['<div><a href=', "<div>see <a href=", "html"]]);
+const fxHtml = atob(fx.raw.split('text/html; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n')[1].split("\r\n--")[0].replace(/\r\n/g, ""));
+check("html-only edit fixes markup and leaves the text part alone", fx.hits === 2 && fxHtml.includes('<div>see <a href="https://aryanh.dev">aryanh.dev</a>)</div>') && fx.raw.includes(lk.raw.split('text/html')[0].slice(-200)), fxHtml);
 
 // ---- makeDraft with a file sent in the request (a resume that isn't in Gmail yet)
 const up = await SL.makeDraft(env, cfg, 1, { to: "kim@mercor.com", subject: "Hi", text: "Hi Kim", html: "<div>Hi Kim</div>",

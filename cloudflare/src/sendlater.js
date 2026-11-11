@@ -65,8 +65,13 @@ function phraseRe(from, html) {
 export function editText(text, type, replace) {
   const html = type === "text/html";
   let out = text, hits = 0;
-  // [from, to] or [from, to, url]: with a url, the HTML part gets `to` as a link to it
+  // [from, to] or [from, to, url]: with a url, the HTML part gets `to` as a link to it.
+  // [from, to, "html"]: an exact replacement in the HTML source only (to fix markup).
   for (const [from, to, url] of replace) {
+    if (url === "html") {
+      if (html && out.includes(from)) { hits += out.split(from).length - 1; out = out.split(from).join(to); }
+      continue;
+    }
     out = out.replace(phraseRe(from, html), () => {
       hits++;
       if (!html) return to;
@@ -278,7 +283,7 @@ export async function editQueued(env, cfg, uid, replace, after = 0, limit = 15) 
     .map(([a, b, u]) => u === undefined ? [String(a), String(b)] : [String(a), String(b), String(u)]);
   if (!pairs.length) return { error: "Nothing to replace." };
   if (pairs.some(([a, b, u = ""]) => /[^\x20-\x7e]/.test(a + b + u))) return { error: "Plain ASCII text only." };
-  if (pairs.some(([, , u]) => u !== undefined && !/^https?:\/\/[^\s"'<>]+$/i.test(u))) return { error: "A link must be a plain http(s) address." };
+  if (pairs.some(([, , u]) => u !== undefined && u !== "html" && !/^https?:\/\/[^\s"'<>]+$/i.test(u))) return { error: "A link must be a plain http(s) address." };
   const token = await tokenFor(env, cfg, uid);
   if (!token) return { error: "Connect Gmail first." };
   const rows = (await env.DB.prepare("SELECT id, draft_id, to_addr FROM send_queue WHERE user_id=? AND state='queued' AND id>? ORDER BY id LIMIT ?")
