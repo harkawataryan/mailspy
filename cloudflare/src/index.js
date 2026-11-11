@@ -43,7 +43,7 @@ const ACTIVITY_SQL = `SELECT * FROM (
   SELECT c.id, 'link', c.ts, c.geo, c.user_agent, c.is_bot, CASE WHEN c.is_bot THEN 'scanner' END, NULL, NULL, NULL, NULL,
          l.id, COALESCE(l.label, l.url)
     FROM tlink_clicks c JOIN tlinks l ON l.id=c.tlink_id WHERE l.user_id=?1
-) ORDER BY ts DESC LIMIT ?2`;
+) WHERE ?3 OR is_bot=0 OR flagged='apple' ORDER BY ts DESC LIMIT ?2`;   // ?3: show automated hits
 import manifest from "../../extension/manifest.json";
 import extensionZip from "../build/extension.zip";   // built by scripts/bump-extension.mjs
 
@@ -488,7 +488,7 @@ async function handle(req, env, ctx) {
     }
     if (path === "/api/activity") {
       // "via Gmail" etc. instead of the mail provider's data centre (the extension shows geo as is)
-      return json((await db.prepare(ACTIVITY_SQL).bind(uid, 50).all()).results.map(shownActivity));
+      return json((await db.prepare(ACTIVITY_SQL).bind(uid, 50, 0).all()).results.map(shownActivity));
     }
     // ✔ / ✔✔ for the Gmail tab to draw on its message list
     if (path === "/api/checks") return json(await checksFor(db, uid));
@@ -528,15 +528,16 @@ async function handle(req, env, ctx) {
     const filters = readFilters(url.searchParams);
     await ensureGoogleSchema(db);   // replied_at, bounced_at
     const list = await emailListPage(db, uid, filters);
+    const prefs = await prefsFor(db, cfg, uid);
     const [totals, activity, reminders, maxA, week] = await db.batch([
       db.prepare("SELECT COUNT(*) AS total, SUM(opens>0) AS opened, SUM(opens) AS opens, SUM(clicks) AS clicks FROM emails WHERE user_id=? AND bounced_at IS NULL").bind(uid),
-      db.prepare(ACTIVITY_SQL).bind(uid, 30),
+      db.prepare(ACTIVITY_SQL).bind(uid, 30, prefs.show_automated ? 1 : 0),
       db.prepare("SELECT * FROM alerts WHERE user_id=? AND kind IN ('reply','followup','spike','revived') ORDER BY id DESC LIMIT 6").bind(uid),
       db.prepare("SELECT COALESCE(MAX(id),0) AS m FROM alerts WHERE user_id=?").bind(uid),
       db.prepare("SELECT COUNT(*) AS sent FROM emails WHERE user_id=? AND bounced_at IS NULL AND created_at>=?").bind(uid, now() - 7 * 86400),
     ]);
     return html(views.dashboard({
-      user, cfg, prefs: await prefsFor(db, cfg, uid),
+      user, cfg, prefs,
       emails: list.emails, matched: list.matched, filters, totals: totals.results[0] || {}, activity: activity.results,
       reminders: reminders.results, maxAlert: maxA.results[0].m, week: week.results[0] || {},
     }));
@@ -848,7 +849,7 @@ async function handle(req, env, ctx) {
     const link = await db.prepare("SELECT * FROM tlinks WHERE id=? AND user_id=?").bind(id, uid).first();
     if (!link) return notFound();
     const c = await db.prepare("SELECT * FROM tlink_clicks WHERE tlink_id=? ORDER BY ts DESC LIMIT 500").bind(id).all();
-    return html(views.linkPage({ user, base: tbase, link, clicks: c.results }));
+    return html(views.linkPage({ user, base: tbase, link, clicks: c.results, prefs: await prefsFor(db, cfg, uid) }));
   }
 
   // ---- templates ----

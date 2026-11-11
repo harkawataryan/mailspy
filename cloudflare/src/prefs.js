@@ -21,7 +21,7 @@ export function defaultPrefs(cfg) {
     spike_minutes: Math.max(1, Math.round(cfg.spikeWindow / 60)),
     prefetch_seconds: cfg.prefetchWindow,
     track_all_links: false,                     // off: only links you mark in Gmail
-    show_automated: true,
+    show_automated: false,
     allow_downloads: true,
     pdf_tiles: false,                           // on: PDFs attached in Gmail are sent as tracked link tiles; off: normal attachments
     hide_sent_pixel: true,                      // with Gmail connected: your Sent copy gets the tracking image taken out (sentcopy.js)

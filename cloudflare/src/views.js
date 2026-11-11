@@ -1204,8 +1204,9 @@ export function linksPage({ user, base, links, notice = "", created = null, form
   return shell("Links", body, "Links", user);
 }
 
-export function linkPage({ user, base, link, clicks }) {
+export function linkPage({ user, base, link, clicks, prefs }) {
   const real = clicks.filter(c => !c.is_bot);
+  if (prefs && !prefs.show_automated) clicks = real;
   const unique = new Set(real.map(c => c.ip)).size;
   const rows = clicks.length ? clicks.map(c => `<tr class="${c.is_bot ? "dim" : ""}">
       <td>${c.is_bot ? 'Security scanner &nbsp;<span class="tag">not counted</span>' : "Clicked"}</td>
