@@ -165,5 +165,15 @@ await R.startRetry(db, e7, { cands: ["zz@acme.com", "jdoe@acme.com"], name: "Z" 
 await R.sweepRetries(env, cfg);
 check("scheduled sweep advances it too", rj(e7).i === 1, rj(e7));
 
+// ---- 8. a bounce isn't stuck behind many delivered emails ----
+for (let k = 0; k < 12; k++) {
+  const d = newEmail(`ok${k}@acme.com`, "Fine");
+  sqlite.prepare("UPDATE emails SET retry_json=? WHERE id=?").run(JSON.stringify({ cands: [`ok${k}@acme.com`, `x${k}@acme.com`], name: "Ok", i: 0, state: "delivered", at: now() - 600, checked: 0, msg: "m", log: [] }), d);
+}
+const e8 = newEmail("zz@acme.com", "Swept2");
+await R.startRetry(db, e8, { cands: ["zz@acme.com", "jdoe@acme.com"], name: "Z2" });
+await R.sweepRetries(env, cfg);
+check("sweep: waiting-to-hear emails go first", rj(e8).i === 1, rj(e8));
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 if (results.some(r => !r)) process.exit(1);

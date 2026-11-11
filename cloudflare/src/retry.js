@@ -28,6 +28,7 @@ import { PATTERNS, splitName, applyPattern } from "./finder.js";
 export const MAX_TRIES = 5;
 const DELIVERED_AFTER = 120;          // seconds with no bounce -> delivered
 const LATE_BOUNCE_HOURS = 24;         // keep checking for a late bounce this long
+const SWEEP_PER_RUN = 8;              // emails the 5-minute cron advances per run
 const MEMORY_TTL = 365 * 86400;
 const EMAIL_RE = /^[^\s@<>,;"']+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
 
@@ -229,12 +230,18 @@ export async function sweepRetries(env, cfg) {
   if (!googleEnabled(cfg)) return;
   const db = env.DB;
   await ensureGoogleSchema(db);
-  // Due ones (not scheduled for later), the longest-unchecked first, so nothing starves.
+  // Due ones (not scheduled for later). Emails still waiting to hear whether they
+  // bounced come first, so a bounce is acted on within a run or two even when many
+  // emails went out together; delivered ones (late-bounce checks, every ~25 minutes)
+  // are skipped until they're due again. Longest-unchecked first, so nothing starves.
+  const t = now();
   const rows = await db.prepare(`SELECT id FROM emails WHERE retry_json IS NOT NULL
-      AND json_extract(retry_json, '$.state') IN ('watching', 'delivered')
       AND json_extract(retry_json, '$.at') <= ?
       AND created_at > ?
-      ORDER BY COALESCE(json_extract(retry_json, '$.checked'), 0) ASC LIMIT 4`).bind(now() + 60, now() - 60 * 86400).all();
+      AND (json_extract(retry_json, '$.state') = 'watching'
+        OR (json_extract(retry_json, '$.state') = 'delivered' AND COALESCE(json_extract(retry_json, '$.checked'), 0) < ?))
+      ORDER BY json_extract(retry_json, '$.state') = 'delivered', COALESCE(json_extract(retry_json, '$.checked'), 0) ASC
+      LIMIT ${SWEEP_PER_RUN}`).bind(t + 60, t - 60 * 86400, t - 1500).all();
   for (const r of rows.results) await advanceRetry(env, cfg, r.id);
 }
 
