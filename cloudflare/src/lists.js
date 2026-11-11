@@ -135,7 +135,7 @@ export async function emailsCsv(db, uid, f) {
       statusLabel(e, t), e.opens || 0, e.clicks || 0, csvTime(e.first_open), csvTime(e.last_open)]));
 }
 
-const WHY = { prefetch: "Image loaded right after sending", scanner: "Security scanner", self: "You viewed it" };
+const WHY = { prefetch: "Image loaded right after sending", scanner: "Security scanner", self: "You viewed it", quoted: "Loaded with a later reply (quoted)" };
 
 // Every open and click on one email, automated ones marked as not counted.
 export function emailEventsCsv(email, events, classify) {

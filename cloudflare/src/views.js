@@ -506,6 +506,7 @@ function activityItem(v) {
   if (v.flagged === "prefetch") { line = `Image loaded right after sending`; dot = "off"; off = true; }
   else if (v.flagged === "scanner") { line = `Security scanner`; dot = "off"; off = true; }
   else if (v.flagged === "self") { line = `You viewed it`; dot = "off"; off = true; }
+  else if (v.flagged === "quoted") { line = `Loaded with a later reply (quoted)`; dot = "off"; off = true; }
   else if (v.flagged === "apple") { line = `<b>${who}</b>: Apple Mail, may be automatic`; dot = "off"; off = true; }
   else line = `<b>${who}</b> ${v.kind === "open" ? "opened" : "clicked a link"}`;
   const sub = `<a href="/email/${v.email_id}">${esc(v.subject)}</a>${place && !off ? ` · ${esc(place)}` : ""}${off ? " · not counted" : ""}`;
@@ -616,6 +617,7 @@ export function emailPage({ user, prefs, email: e, links, events, maxAlert, base
     if (v.flagged === "prefetch") why = "Image loaded right after sending";
     else if (v.flagged === "scanner") why = "Security scanner";
     else if (v.flagged === "self") why = "You viewed it";
+    else if (v.flagged === "quoted") why = "Loaded with a later reply (quoted)";
     else if (v.flagged === "apple") why = "Apple Mail, may be automatic";
     const main = why ? `${why} <span class="tag">not counted</span>` : what;
     const link = v.url ? `<div class="t2"><a class="link" href="${esc(v.url)}" target="_blank" rel="noreferrer">${esc(v.url)}</a></div>` : "";

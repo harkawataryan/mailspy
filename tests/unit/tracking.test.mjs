@@ -169,5 +169,34 @@ const sp2 = V.settingsPage({ cfg, base: "https://x", user, prefs, gmail: { enabl
 check("settings without Gmail: value kept in a hidden field", sp2.includes('<input type="hidden" name="hide_sent_pixel" value="on">') && !sp2.includes("Hide tracking from my own Sent copy</label>"), "");
 check("privacy policy explains the Sent-copy swap", V.privacyPage({}, "https://x").includes("Hide tracking from my own Sent copy") && V.privacyPage({}, "https://x").includes("moves the original to Trash"), "");
 
+// Earlier emails quoted in a later reply: their images load with it, not counted
+{
+  const q1 = mk("Exam 2 Missed", 86400 * 2);
+  const q2 = mk("Re: Exam 2 Missed", 86400);
+  const q3 = mk("RE: exam 2 missed", 600);              // the new reply quoting both
+  const other = mk("Something else", 86400);
+  const gmailReq = () => req(UA.gmail, "66.102.7." + Math.floor(Math.random() * 200), { city: "Mountain View", country: "US" });
+  // old images arrive first, then the reply's own
+  await T.recordEvent(db, cfg, gmailReq(), q1, "open");
+  await T.recordEvent(db, cfg, gmailReq(), q2, "open");
+  await T.recordEvent(db, cfg, gmailReq(), other, "open");
+  await T.recordEvent(db, cfg, gmailReq(), q3, "open");
+  check("quoted: earlier emails' opens re-flagged once the reply's image loads",
+    events(q1.id).every(e => e.flagged === "quoted") && events(q2.id).every(e => e.flagged === "quoted") && em(q1.id).opens === 0 && em(q2.id).opens === 0,
+    [events(q1.id), events(q2.id)]);
+  check("quoted: their alerts removed", alerts(q1.id).length === 0 && alerts(q2.id).length === 0, [alerts(q1.id), alerts(q2.id)]);
+  check("quoted: the reply itself counts", em(q3.id).opens === 1 && alerts(q3.id).length === 1, em(q3.id));
+  check("quoted: a different conversation is untouched", em(other.id).opens === 1, events(other.id));
+  // reply's image first, then an old one
+  await new Promise(r => setTimeout(r, 2100));
+  await T.recordEvent(db, cfg, gmailReq(), q3, "open");
+  await T.recordEvent(db, cfg, gmailReq(), q2, "open");
+  check("quoted: earlier email loading just after the reply is not counted", em(q2.id).opens === 0 && events(q2.id).at(-1).flagged === "quoted", events(q2.id));
+  // on its own, a minute later, an earlier email still counts
+  sqlite.prepare("UPDATE events SET ts = ts - 60 WHERE email_id IN (?,?,?)").run(q1.id, q2.id, q3.id);
+  await T.recordEvent(db, cfg, gmailReq(), q1, "open");
+  check("quoted: earlier email opened on its own still counts", em(q1.id).opens === 1, events(q1.id));
+}
+
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 if (results.some(r => !r)) process.exit(1);

@@ -222,6 +222,26 @@ export function sentRef(email) {
   return email.created_at;
 }
 
+// ---- earlier emails quoted in a later reply ----
+// A reply quotes the conversation, and the quote carries the tracking image of
+// every earlier tracked email in it. So whenever the reply is shown (to them, or
+// to you right after sending), the earlier emails' images load too and would
+// count as fresh opens. All images in one message load together, so an open of
+// an earlier email within QUOTE_WINDOW seconds of any hit on a later email in
+// the same conversation (same subject without Re:/Fwd:) is the quote, not a
+// read: stored as flagged='quoted', not counted, no alert. Checked both ways,
+// since either image can arrive first.
+const QUOTE_WINDOW = 6;
+export const threadKey = s => String(s || "").replace(/^\s*((re|fwd?|aw)\s*:\s*)+/i, "").trim().toLowerCase();
+async function conversation(db, email) {
+  const key = threadKey(email.subject);
+  if (!key || key === "(no subject)" || email.user_id == null) return [];
+  const rows = (await db.prepare(`SELECT id, subject, created_at FROM emails
+      WHERE user_id=? AND id!=? AND created_at > ? AND subject LIKE ? ESCAPE '!'`)
+    .bind(email.user_id, email.id, now() - 365 * 86400, "%" + key.replace(/[!%_]/g, c => "!" + c) + "%").all()).results || [];
+  return rows.filter(r => threadKey(r.subject) === key);
+}
+
 // email: {id, to_addr, to_name, subject, created_at, scheduled_at, user_id}
 export async function recordEvent(db, cfg, req, email, kind, linkId = null) {
   const ip = req.headers.get("CF-Connecting-IP") || "";
@@ -258,6 +278,16 @@ export async function recordEvent(db, cfg, req, email, kind, linkId = null) {
       .bind(eid, t - SELF_WINDOW).first();
     if (mine) { flagged = "self"; isBot = 1; }
   }
+  let thread = [];
+  if (kind === "open") {
+    thread = await conversation(db, email);
+    const later = thread.filter(r => r.created_at > email.created_at).map(r => r.id);
+    if (!isBot && later.length) {
+      const hit = await db.prepare(`SELECT 1 AS x FROM events WHERE kind='open' AND ts>? AND email_id IN (${later.map(() => "?").join(",")}) LIMIT 1`)
+        .bind(t - QUOTE_WINDOW, ...later).first();
+      if (hit) { flagged = "quoted"; isBot = 1; }
+    }
+  }
   if (kind === "open") {
     // Same client re-requesting the same image within 2s: count once.
     const dup = await db.prepare(
@@ -286,6 +316,13 @@ export async function recordEvent(db, cfg, req, email, kind, linkId = null) {
     "INSERT INTO events(email_id,kind,link_id,ip,user_agent,geo,ts,is_bot,flagged) VALUES(?,?,?,?,?,?,?,?,?)")
     .bind(eid, kind, linkId, ip, ua, geo, t, isBot, flagged));
   stmts.push(...recount(db, eid));
+  // This is the later email: earlier ones that just loaded with it were its quote.
+  for (const r of thread.filter(r => r.created_at < email.created_at)) {
+    stmts.push(db.prepare("UPDATE events SET is_bot=1, flagged='quoted' WHERE email_id=? AND kind='open' AND is_bot=0 AND ts>?")
+      .bind(r.id, t - QUOTE_WINDOW));
+    stmts.push(db.prepare("DELETE FROM alerts WHERE email_id=? AND kind IN ('open','spike','revived') AND ts>?").bind(r.id, t - QUOTE_WINDOW));
+    stmts.push(...recount(db, r.id));
+  }
   await db.batch(stmts);
   if (isBot) return;
 
