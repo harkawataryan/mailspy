@@ -71,6 +71,12 @@ globalThis.fetch = async (url, init = {}) => {
     const addr = u.searchParams.get("q").replace("to:", "");
     return J({ drafts: [...drafts].filter(([, d]) => d.to.includes(addr)).map(([id]) => ({ id })) });
   }
+  if (path === "/drafts" && init.method === "POST") {
+    const raw = Buffer.from(JSON.parse(init.body).message.raw, "base64url").toString("binary");
+    const id = "new" + drafts.size;
+    drafts.set(id, { to: raw.match(/^To: (.*)$/m)[1], raw });
+    return J({ id });
+  }
   if (path === "/drafts/send") {
     const { id } = JSON.parse(init.body);
     if (sendFails) { const r = sendFails(id); if (r) return r; }
@@ -192,6 +198,13 @@ const dmPx = SL.addPixel(DM, "https://go.aryanh.dev");
 check("draftMime: headers, both parts and the attachment", DM.startsWith("To: ray@waymo.com\r\nSubject: Stripe Intern interested in Waymo (Summer 2027)") && /multipart\/mixed/.test(DM) && /filename="r\.pdf"/.test(DM) && DM.replace(/\r\n/g, "").includes(PDF.replace(/=+$/, "").slice(0, 40)), DM.slice(0, 300));
 check("draftMime: tracking image goes into the HTML only, attachment kept", dmPx && /\/img\/[A-Za-z0-9_-]+\.gif/.test(atob(dmPx.raw.split('text/html; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n')[1].split("\r\n--")[0].replace(/\r\n/g, ""))) && dmPx.raw.includes('filename="r.pdf"'), "");
 check("draftMime: edits work on it (apostrophes too)", SL.editRaw(DM, [["I'm Aryan.", "I'm Aryan Harkawat."]]).hits === 2, "");
+
+// ---- makeDraft with a file sent in the request (a resume that isn't in Gmail yet)
+const up = await SL.makeDraft(env, cfg, 1, { to: "kim@mercor.com", subject: "Hi", text: "Hi Kim", html: "<div>Hi Kim</div>",
+  files: [{ name: "Resume.pdf", type: "application/pdf", data: Buffer.from(PDFBIN, "binary").toString("base64") }] });
+const upRaw = up.draft && drafts.get(up.draft).raw;
+check("makeDraft: an uploaded file is attached", up.attachments.join() === "Resume.pdf" && /filename="Resume\.pdf"/.test(upRaw) && upRaw.replace(/\r\n/g, "").includes(PDF.replace(/=+$/, "").slice(0, 40)), up);
+check("makeDraft: bad base64 is refused", /base64/.test((await SL.makeDraft(env, cfg, 1, { to: "kim@mercor.com", text: "a", html: "b", files: [{ name: "x.pdf", data: "%%%" }] })).error || ""), null);
 
 console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
 if (results.some(r => !r)) process.exit(1);

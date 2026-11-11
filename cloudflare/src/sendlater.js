@@ -236,6 +236,18 @@ export async function makeDraft(env, cfg, uid, d) {
     }
     if (!files.length) return { error: "That message has no attachments." };
   }
+  // Or files sent with the request: [{ name, type, data (base64) }], up to 5 MB in all.
+  if (Array.isArray(d.files)) {
+    for (const f of d.files.slice(0, 5)) {
+      let bin;
+      try { bin = atob(String(f && f.data || "").replace(/\s/g, "")); } catch { return { error: "A file isn't valid base64." }; }
+      const name = String(f.name || "").replace(/["\r\n\\/]/g, "").slice(0, 120);
+      if (!bin || !name) return { error: "Each file needs a name and data." };
+      const type = /^[\w.+-]+\/[\w.+-]+$/.test(String(f.type || "")) ? String(f.type) : "application/octet-stream";
+      files.push({ name, type, bin });
+    }
+    if (files.reduce((n, f) => n + f.bin.length, 0) > 5 * 1024 * 1024) return { error: "Attachments are over 5 MB." };
+  }
   const raw = draftMime({ to, subject: String(d.subject || ""), text: String(d.text), html: String(d.html), files });
   const r = await gmail(token, "/drafts", { method: "POST", body: JSON.stringify({ message: { raw: binToB64url(raw) } }) });
   return { draft: r && r.id, to, attachments: files.map(f => f.name) };
