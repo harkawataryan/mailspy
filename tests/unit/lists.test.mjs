@@ -30,11 +30,11 @@ add(1, "kim@acme.example", null, "100% match_here", { created_at: t - 60 * DAY, 
 add(1, "later@x.example", "Later", "Scheduled one", { scheduled_at: t + DAY });
 add(2, "jane@stripe.com", "Jane Doe", "Someone else's", { opens: 5 });
 
-const F = (o = {}) => ({ q: "", status: "", days: "", page: 1, ...o });
+const F = (o = {}) => ({ q: "", status: "", days: "", sort: "", page: 1, ...o });
 const subjects = async f => (await L.emailListPage(db, 1, f)).emails.map(e => e.subject);
 const p = s => new URLSearchParams(s);
 
-check("filters read from the URL", JSON.stringify(L.readFilters(p("q=%20a%20%20b&status=opened&days=30&page=3"))) === JSON.stringify({ q: "a b", status: "opened", days: "30", page: 3 }));
+check("filters read from the URL", JSON.stringify(L.readFilters(p("q=%20a%20%20b&status=opened&days=30&page=3"))) === JSON.stringify({ q: "a b", status: "opened", days: "30", sort: "", page: 3 }));
 check("unknown filter values ignored", JSON.stringify(L.readFilters(p("status=nope&days=5&page=-2"))) === JSON.stringify(F()));
 check("query string round trip, page resets", L.filterQuery(F({ q: "a&b", status: "opened", page: 4 })) === "?q=a%26b&status=opened"
   && L.filterQuery(F({ page: 4 }), { page: 2 }) === "?page=2" && L.filterQuery(F()) === "");
@@ -45,7 +45,7 @@ check("search by name, case-insensitive", JSON.stringify(await subjects(F({ q: "
 check("search by subject", JSON.stringify(await subjects(F({ q: "following" }))) === '["Following up"]');
 check("every word must match", (await subjects(F({ q: "jane figma" }))).length === 0 && (await subjects(F({ q: "bob figma" }))).length === 1);
 check("% and _ are literal", JSON.stringify(await subjects(F({ q: "100%" }))) === '["100% match_here"]' && (await subjects(F({ q: "_" }))).length === 1);
-check("status opened", JSON.stringify(await subjects(F({ status: "opened" }))) === '["100% match_here","Intro call"]');
+check("status opened", JSON.stringify(await subjects(F({ status: "opened" }))) === '["Intro call","100% match_here"]');
 check("status not opened leaves out scheduled", JSON.stringify(await subjects(F({ status: "unopened" }))) === '["Following up"]');
 check("status clicked", JSON.stringify(await subjects(F({ status: "clicked" }))) === '["Intro call"]');
 check("status scheduled", JSON.stringify(await subjects(F({ status: "scheduled" }))) === '["Scheduled one"]');
@@ -53,6 +53,24 @@ check("last 7 days", (await subjects(F({ days: "7" }))).length === 2);
 check("last 30 / 90 days", (await subjects(F({ days: "30" }))).length === 3 && (await subjects(F({ days: "90" }))).length === 4);
 check("filters combine", JSON.stringify(await subjects(F({ status: "opened", days: "30" }))) === '["Intro call"]');
 for (let i = 0; i < 230; i++) add(1, `p${i}@bulk.example`, null, `Bulk ${i}`);
+// sorting: latest activity by default (sent, real open, real click, reply)
+{
+  const ids = {};
+  for (const [k, ago, extra] of [["old-but-opened", 30, { opens: 1 }], ["new-quiet", 1, {}], ["old-quiet", 40, {}]]) {
+    add(9, k + "@s.example", null, k, { created_at: t - ago * DAY, ...extra });
+    ids[k] = sqlite.prepare("SELECT id FROM emails WHERE subject=?").get(k).id;
+  }
+  sqlite.prepare("UPDATE emails SET last_open=? WHERE id=?").run(t - 60, ids["old-but-opened"]);
+  sqlite.prepare("UPDATE emails SET replied_at=? WHERE id=?").run(t - 30, ids["old-quiet"]);
+  const sub9 = async f => (await L.emailListPage(db, 9, f)).emails.map(e => e.subject);
+  check("default sort: latest activity first (reply, then open, then newest send)",
+    JSON.stringify(await sub9(F())) === JSON.stringify(["old-quiet", "old-but-opened", "new-quiet"]), await sub9(F()));
+  check("sort: newest sent", JSON.stringify(await sub9(F({ sort: "sent" }))) === JSON.stringify(["new-quiet", "old-but-opened", "old-quiet"]), await sub9(F({ sort: "sent" })));
+  check("sort: oldest sent", (await sub9(F({ sort: "oldest" })))[0] === "old-quiet", "");
+  check("sort: most opens", (await sub9(F({ sort: "opens" })))[0] === "old-but-opened", "");
+  check("sort read from the URL and kept in links", L.readFilters(p("sort=opens")).sort === "opens" && L.readFilters(p("sort=bogus")).sort === ""
+    && L.filterQuery(F({ sort: "clicks", status: "opened" }), { status: "" }) === "?sort=clicks", "");
+}
 const pg1 = await L.emailListPage(db, 1, F({ q: "bulk" })), pg3 = await L.emailListPage(db, 1, F({ q: "bulk", page: 3 }));
 check("pages", pg1.matched === 230 && pg1.emails.length === L.PAGE_SIZE && pg3.emails.length === 30 && pg3.emails[29].subject === "Bulk 0");
 

@@ -156,8 +156,11 @@ const hidden = V.emailPage({ user, prefs: { ...prefs, show_automated: false }, e
 check("email page with automated hits hidden: Apple rows still shown", hidden.includes("Apple Mail, may be automatic"), "");
 const act = sqlite.prepare(`SELECT v.id, v.kind, v.ts, v.geo, v.user_agent, v.is_bot, v.flagged, e.id AS email_id, e.to_addr, e.to_name, e.subject
   FROM events v JOIN emails e ON e.id=v.email_id ORDER BY v.ts DESC`).all();
-const dash = V.dashboard({ user, cfg, prefs, emails: [em(a.id), em(b.id)], totals: { total: 2 }, activity: act, reminders: [], maxAlert: 0, week: {} });
-check("dashboard activity: 'via Gmail', real places kept, Apple labelled", dash.includes("via Gmail") && !dash.includes("Mountain View") && dash.includes("Leeds, GB") && dash.includes("Apple Mail, may be automatic"), "");
+const dash = V.dashboard({ user, cfg, prefs, emails: [em(a.id), em(b.id)], totals: { total: 2 },
+  followups: [{ id: b.id, to_addr: "jane@acme.com", to_name: "Jane", subject: "Direct one", opens: 3, last_open: now() - 600, sent_at: now() - 3 * 86400 }],
+  reminders: [], maxAlert: 0, week: {} });
+check("dashboard: follow-up panel instead of the activity feed", dash.includes("Worth a follow-up") && dash.includes("opened 3 times") && dash.includes("sent 3d ago, no reply") && !dash.includes("<h2>Activity</h2>"), "");
+check("dashboard: last activity column and sort menu", dash.includes("Last activity") && dash.includes('name="sort"') && dash.includes("Latest activity") && dash.includes("Most opens"), "");
 
 // ---- the setting ----
 check("'Hide tracking from my own Sent copy' is on by default", P.defaultPrefs(cfg).hide_sent_pixel === true && P.readPrefs(cfg, "{}").hide_sent_pixel === true, "");

@@ -19,17 +19,36 @@ export const STATUSES = [
   { key: "scheduled", label: "Scheduled",  sql: scheduled },
 ];
 
+// Sort orders for the list. Latest activity (the default) is the newest of: sent,
+// last real open, last real click, reply. Ties fall back to the newest email.
+export const SORTS = [
+  { key: "",       label: "Latest activity", sql: "activity_at DESC" },
+  { key: "sent",   label: "Newest sent",     sql: "sent_at DESC" },
+  { key: "oldest", label: "Oldest sent",     sql: "sent_at ASC" },
+  { key: "opens",  label: "Most opens",      sql: "e.opens DESC, activity_at DESC" },
+  { key: "clicks", label: "Most clicks",     sql: "e.clicks DESC, activity_at DESC" },
+];
+// Extra columns for each row: when it went out, its last real click, and latest activity.
+export function listCols(t = now()) {
+  const sent = `(CASE WHEN e.scheduled_at>0 AND e.scheduled_at<=${Math.floor(t)} THEN e.scheduled_at ELSE e.created_at END)`;
+  const click = "(SELECT MAX(v.ts) FROM events v WHERE v.email_id=e.id AND v.kind='click' AND v.is_bot=0)";
+  return `e.*, ${sent} AS sent_at, ${click} AS last_click,
+    MAX(${sent}, COALESCE(e.last_open,0), COALESCE(${click},0), COALESCE(e.replied_at,0)) AS activity_at`;
+}
+
 export const RANGES = [["", "All time"], ["7", "Last 7 days"], ["30", "Last 30 days"], ["90", "Last 90 days"]];
 
 // Filters from the query string; anything unknown is ignored.
 export function readFilters(params) {
   const status = String(params.get("status") || "");
   const days = String(params.get("days") || "");
+  const sort = String(params.get("sort") || "");
   const page = parseInt(params.get("page") || "1", 10);
   return {
     q: String(params.get("q") || "").trim().replace(/\s+/g, " ").slice(0, 200),
     status: STATUSES.some(s => s.key === status) ? status : "",
     days: RANGES.some(([k]) => k && k === days) ? days : "",
+    sort: SORTS.some(s => s.key && s.key === sort) ? sort : "",
     page: Number.isFinite(page) && page > 1 ? Math.min(page, 100000) : 1,
   };
 }
@@ -41,6 +60,7 @@ export function filterQuery(f, change = {}) {
   if (v.q) p.set("q", v.q);
   if (v.status) p.set("status", v.status);
   if (v.days) p.set("days", v.days);
+  if (v.sort) p.set("sort", v.sort);
   if (v.page > 1) p.set("page", String(v.page));
   const s = p.toString();
   return s ? `?${s}` : "";
@@ -67,8 +87,9 @@ export function emailWhere(uid, f, t = now()) {
 // One page of the dashboard list, and how many emails match in all.
 export async function emailListPage(db, uid, f) {
   const { where, args } = emailWhere(uid, f);
+  const order = (SORTS.find(s => s.key === (f.sort || "")) || SORTS[0]).sql;
   const [rows, count] = await db.batch([
-    db.prepare(`SELECT e.* FROM emails e WHERE ${where} ORDER BY e.id DESC LIMIT ? OFFSET ?`)
+    db.prepare(`SELECT ${listCols()} FROM emails e WHERE ${where} ORDER BY ${order}, e.id DESC LIMIT ? OFFSET ?`)
       .bind(...args, PAGE_SIZE, (f.page - 1) * PAGE_SIZE),
     db.prepare(`SELECT COUNT(*) AS n FROM emails e WHERE ${where}`).bind(...args),
   ]);

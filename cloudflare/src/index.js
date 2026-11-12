@@ -529,16 +529,21 @@ async function handle(req, env, ctx) {
     await ensureGoogleSchema(db);   // replied_at, bounced_at
     const list = await emailListPage(db, uid, filters);
     const prefs = await prefsFor(db, cfg, uid);
-    const [totals, activity, reminders, maxA, week] = await db.batch([
+    const [totals, followups, reminders, maxA, week] = await db.batch([
       db.prepare("SELECT COUNT(*) AS total, SUM(opens>0) AS opened, SUM(opens) AS opens, SUM(clicks) AS clicks FROM emails WHERE user_id=? AND bounced_at IS NULL").bind(uid),
-      db.prepare(ACTIVITY_SQL).bind(uid, 30, prefs.show_automated ? 1 : 0),
+      // Opened, no reply yet, sent 2+ days ago (and in the last 60): most opens first.
+      db.prepare(`SELECT id, to_addr, to_name, subject, opens, last_open,
+          CASE WHEN scheduled_at>0 THEN scheduled_at ELSE created_at END AS sent_at
+        FROM emails WHERE user_id=? AND bounced_at IS NULL AND replied_at IS NULL AND opens>0
+          AND CASE WHEN scheduled_at>0 THEN scheduled_at ELSE created_at END BETWEEN ? AND ?
+        ORDER BY opens DESC, last_open DESC LIMIT 6`).bind(uid, now() - 60 * 86400, now() - 2 * 86400),
       db.prepare("SELECT * FROM alerts WHERE user_id=? AND kind IN ('reply','followup','spike','revived') ORDER BY id DESC LIMIT 6").bind(uid),
       db.prepare("SELECT COALESCE(MAX(id),0) AS m FROM alerts WHERE user_id=?").bind(uid),
       db.prepare("SELECT COUNT(*) AS sent FROM emails WHERE user_id=? AND bounced_at IS NULL AND created_at>=?").bind(uid, now() - 7 * 86400),
     ]);
     return html(views.dashboard({
       user, cfg, prefs,
-      emails: list.emails, matched: list.matched, filters, totals: totals.results[0] || {}, activity: activity.results,
+      emails: list.emails, matched: list.matched, filters, totals: totals.results[0] || {}, followups: followups.results,
       reminders: reminders.results, maxAlert: maxA.results[0].m, week: week.results[0] || {},
     }));
   }

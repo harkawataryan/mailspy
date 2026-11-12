@@ -6,7 +6,7 @@ import { esc, ago, now } from "./util.js";
 import { classifyAgent, placeOf } from "./tracking.js";
 import { markSVG } from "../../brand/mark.js";
 import { NOTIFY_KINDS } from "./prefs.js";
-import { STATUSES, RANGES, PAGE_SIZE, filterQuery } from "./lists.js";
+import { STATUSES, RANGES, SORTS, PAGE_SIZE, filterQuery } from "./lists.js";
 import { OPEN_PATTERN_JS } from "./people.js";
 
 const MARK = markSVG("mk");
@@ -515,10 +515,17 @@ function activityItem(v) {
 }
 
 // ---- pages ----
-export function dashboard({ user, cfg, prefs, emails, matched = emails.length, filters = { q: "", status: "", days: "", page: 1 },
-                           totals, activity, reminders, maxAlert, week }) {
-  // Apple Mail fetches may be the person reading, so they stay visible either way.
-  if (prefs && !prefs.show_automated) activity = activity.filter(v => !v.flagged || v.flagged === "apple");
+// What happened last to an email, for the list's "Last activity" column.
+function lastActivity(e, t = Date.now() / 1000) {
+  const sent = e.sent_at || (e.scheduled_at > 0 ? e.scheduled_at : e.created_at);
+  if (e.scheduled_at === -1 || (e.scheduled_at > 0 && e.scheduled_at > t)) return { what: "Scheduled", ts: null };
+  const all = [["Replied", e.replied_at], ["Clicked", e.last_click], ["Opened", e.last_open], ["Sent", sent]]
+    .filter(([, ts]) => ts > 0).sort((a, b) => b[1] - a[1]);
+  return all.length ? { what: all[0][0], ts: all[0][1] } : { what: "", ts: null };
+}
+
+export function dashboard({ user, cfg, prefs, emails, matched = emails.length, filters = { q: "", status: "", days: "", sort: "", page: 1 },
+                           totals, followups = [], reminders, maxAlert, week }) {
   const f = filters;
   const filtered = !!(f.q || f.status || f.days);
   const rows = emails.length ? emails.map(e => `<tr class="row" data-href="/email/${e.id}">
@@ -526,7 +533,7 @@ export function dashboard({ user, cfg, prefs, emails, matched = emails.length, f
       <td>${status(e)}</td>
       <td class="r num">${e.opens || "<span class='faint'>0</span>"}</td>
       <td class="r num">${e.clicks || "<span class='faint'>0</span>"}</td>
-      <td class="r time">${e.last_open ? esc(ago(e.last_open)) : "—"}</td></tr>`).join("")
+      <td class="r time">${(a => a.what ? `<span class="faint">${a.what}</span>${a.ts ? " " + esc(ago(a.ts)) : ""}` : "—")(lastActivity(e))}</td></tr>`).join("")
     : `<tr><td colspan="5"><div class="empty">${totals.total
         ? `<b>No emails match.</b> <a class="link" href="/">Clear filters</a>`
         : `<b>No tracked emails yet.</b> Send one from Gmail with the extension on and it appears here.`}</div></td></tr>`;
@@ -537,9 +544,12 @@ export function dashboard({ user, cfg, prefs, emails, matched = emails.length, f
       <ul class="ev">${reminders.map(a => `<li><span class="dot warn"></span>
         <div><div class="l1">${esc(a.message)}</div><div class="l2"><a href="/email/${a.email_id}">View email</a></div></div>
         <span class="tm">${shortAgo(a.ts)}</span></li>`).join("")}</ul></div>` : ""}
-    <div class="panel"><div class="ph"><h2>Activity</h2></div>
-      ${activity.length ? `<ul class="ev">${activity.map(activityItem).join("")}</ul>`
-        : `<div class="empty">Opens and clicks appear here as they happen.</div>`}</div>`;
+    <div class="panel"><div class="ph"><h2>Worth a follow-up</h2></div>
+      ${followups.length ? `<ul class="ev">${followups.map(e => `<li><span class="dot"></span>
+        <div><div class="l1"><b>${esc(e.to_name || e.to_addr)}</b> opened ${e.opens} time${e.opens === 1 ? "" : "s"}</div>
+        <div class="l2"><a href="/email/${e.id}">${esc(e.subject)}</a> · sent ${esc(ago(e.sent_at))}, no reply</div></div>
+        <span class="tm">${shortAgo(e.last_open)}</span></li>`).join("")}</ul>`
+        : `<div class="empty">Emails that were opened but haven't had a reply after 2 days show up here.</div>`}</div>`;
 
   // Search and filters live in the address (?q= &status= &days= &page=), so views can be bookmarked.
   const seg = [{ key: "", label: "All" }, ...STATUSES]
@@ -549,6 +559,8 @@ export function dashboard({ user, cfg, prefs, emails, matched = emails.length, f
         <div class="search">${SEARCH_ICON}<input id="q" name="q" type="text" placeholder="Search subject, person, company" autocomplete="off" value="${esc(f.q)}" aria-label="Search emails"><kbd>/</kbd></div>
         ${f.status ? `<input type="hidden" name="status" value="${esc(f.status)}">` : ""}
         <div class="seg" id="seg">${seg}</div>
+        <select name="sort" aria-label="Sort" onchange="this.form.submit()">${SORTS.map(s =>
+          `<option value="${s.key}"${(f.sort || "") === s.key ? " selected" : ""}>${s.label}</option>`).join("")}</select>
         <select name="days" aria-label="Date range" onchange="this.form.submit()">${RANGES.map(([k, n]) =>
           `<option value="${k}"${f.days === k ? " selected" : ""}>${n}</option>`).join("")}</select>
         ${filtered ? `<a class="link clear" href="/">Clear</a>` : ""}
@@ -573,7 +585,7 @@ export function dashboard({ user, cfg, prefs, emails, matched = emails.length, f
         ${matched ? `<a class="btn sm" href="/emails.csv${esc(filterQuery(f))}" download>Download CSV</a>` : ""}
       </div>${toolbar}
       <div style="overflow-x:auto"><table id="sent">
-        <thead><tr><th>Email</th><th>Status</th><th class="r">Opens</th><th class="r">Clicks</th><th class="r">Last opened</th></tr></thead>
+        <thead><tr><th>Email</th><th>Status</th><th class="r">Opens</th><th class="r">Clicks</th><th class="r">Last activity</th></tr></thead>
         <tbody>${rows}</tbody></table></div>${pager}
     </div>
     <div>${side}</div>
