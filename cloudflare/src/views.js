@@ -174,6 +174,7 @@ const STYLE = `<style>
   .tb select { width:auto; height:30px; font-size:12.5px; padding:0 8px; }
   .tb .clear { font-size:12.5px; }
   @media (max-width:720px) { .tb .seg { display:flex; flex-wrap:wrap; } }
+  #sent .t1 { max-width:330px; }
   #sentPanel.loading table { opacity:.5; transition:opacity .15s; }
   .pager { display:flex; align-items:center; gap:8px; padding:10px 16px; border-top:1px solid var(--line); font-size:12.5px; }
   .pager .sp { flex:1; }
@@ -535,7 +536,7 @@ export function dashboard({ user, cfg, prefs, emails, matched = emails.length, f
       <td>${status(e)}</td>
       <td class="r num">${e.opens || "<span class='faint'>0</span>"}</td>
       <td class="r num">${e.clicks || "<span class='faint'>0</span>"}</td>
-      <td class="r time">${(a => a.what ? `<span class="faint">${a.what}</span>${a.ts ? " " + esc(ago(a.ts)) : ""}` : "—")(lastActivity(e))}</td></tr>`).join("")
+      <td class="r time">${(a => a.what ? (a.ts ? `<div>${esc(ago(a.ts))}</div><div class="t2">${a.what}</div>` : `<div class="t2">${a.what}</div>`) : "—")(lastActivity(e))}</td></tr>`).join("")
     : `<tr><td colspan="5"><div class="empty">${totals.total
         ? `<b>No emails match.</b> <a class="link" href="/">Clear filters</a>`
         : `<b>No tracked emails yet.</b> Send one from Gmail with the extension on and it appears here.`}</div></td></tr>`;
