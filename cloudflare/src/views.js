@@ -174,6 +174,7 @@ const STYLE = `<style>
   .tb select { width:auto; height:30px; font-size:12.5px; padding:0 8px; }
   .tb .clear { font-size:12.5px; }
   @media (max-width:720px) { .tb .seg { display:flex; flex-wrap:wrap; } }
+  #sentPanel.loading table { opacity:.5; transition:opacity .15s; }
   .pager { display:flex; align-items:center; gap:8px; padding:10px 16px; border-top:1px solid var(--line); font-size:12.5px; }
   .pager .sp { flex:1; }
 
@@ -357,8 +358,9 @@ document.querySelectorAll("time[data-ts]").forEach(function (el) {
   el.textContent = d.toLocaleString(undefined, o);
   el.title = d.toLocaleString();
 });
-document.querySelectorAll("tr.row[data-href]").forEach(function (tr) {
-  tr.addEventListener("click", function (e) { if (!e.target.closest("a,button,form")) location.href = tr.dataset.href; });
+document.addEventListener("click", function (e) {
+  var tr = e.target.closest && e.target.closest("tr.row[data-href]");
+  if (tr && !e.target.closest("a,button,form")) location.href = tr.dataset.href;
 });
 </script>`;
 
@@ -385,7 +387,7 @@ function liveScript(maxAlert, onlyEmailId = null, prefs = null) {
       last = d.max;
       var mine = d.alerts.filter(function (a) { return only === null || a.email_id === only; });
       mine.forEach(function (a) { if (!kinds || kinds.indexOf(a.kind) >= 0) toast(a.message); });
-      if (mine.length) setTimeout(function () { location.reload(); }, 3500);
+      if (mine.length) setTimeout(function () { if (window.__mailspyRefresh) window.__mailspyRefresh(); else location.reload(); }, 3500);
     } catch (e) {}
   }
   setInterval(poll, 10000);
@@ -559,9 +561,9 @@ export function dashboard({ user, cfg, prefs, emails, matched = emails.length, f
         <div class="search">${SEARCH_ICON}<input id="q" name="q" type="text" placeholder="Search subject, person, company" autocomplete="off" value="${esc(f.q)}" aria-label="Search emails"><kbd>/</kbd></div>
         ${f.status ? `<input type="hidden" name="status" value="${esc(f.status)}">` : ""}
         <div class="seg" id="seg">${seg}</div>
-        <select name="sort" aria-label="Sort" onchange="this.form.submit()">${SORTS.map(s =>
+        <select name="sort" aria-label="Sort" onchange="this.form.requestSubmit()">${SORTS.map(s =>
           `<option value="${s.key}"${(f.sort || "") === s.key ? " selected" : ""}>${s.label}</option>`).join("")}</select>
-        <select name="days" aria-label="Date range" onchange="this.form.submit()">${RANGES.map(([k, n]) =>
+        <select name="days" aria-label="Date range" onchange="this.form.requestSubmit()">${RANGES.map(([k, n]) =>
           `<option value="${k}"${f.days === k ? " selected" : ""}>${n}</option>`).join("")}</select>
         ${filtered ? `<a class="link clear" href="/">Clear</a>` : ""}
       </form>` : "";
@@ -573,14 +575,14 @@ export function dashboard({ user, cfg, prefs, emails, matched = emails.length, f
 
   const body = `
   <div class="head"><h1>Emails</h1></div>
-  ${!totals.total ? "" : metrics([
+  <div id="dmetrics">${!totals.total ? "" : metrics([
     { k: "Tracked", v: totals.total || 0, n: week.sent ? `${week.sent} this week` : "" },
     { k: "Opened", v: totals.opened || 0, n: `${pct}% open rate` },
     { k: "Total opens", v: totals.opens || 0 },
     { k: "Link clicks", v: totals.clicks || 0 },
-  ])}
+  ])}</div>
   <div class="cols">
-    <div class="panel">
+    <div class="panel" id="sentPanel">
       <div class="ph"><h2>Sent<span class="count">${matched}</span></h2><span class="sp"></span>
         ${matched ? `<a class="btn sm" href="/emails.csv${esc(filterQuery(f))}" download>Download CSV</a>` : ""}
       </div>${toolbar}
@@ -588,15 +590,55 @@ export function dashboard({ user, cfg, prefs, emails, matched = emails.length, f
         <thead><tr><th>Email</th><th>Status</th><th class="r">Opens</th><th class="r">Clicks</th><th class="r">Last activity</th></tr></thead>
         <tbody>${rows}</tbody></table></div>${pager}
     </div>
-    <div>${side}</div>
+    <div id="dside">${side}</div>
   </div>
   <script>
   (function () {
-    var q = document.getElementById("q"); if (!q) return;
-    var had = q.value;
+    // Filters, sort, search and pages load in place: the same server-rendered page
+    // is fetched and its list, numbers and side panel swapped in, so there's no
+    // full reload. The address still changes, so Back and bookmarks work.
+    var seq = 0;
+    async function load(url, push) {
+      var mine = ++seq, panel = document.getElementById("sentPanel");
+      if (panel) panel.classList.add("loading");
+      try {
+        var r = await fetch(url, { credentials: "same-origin" });
+        if (!r.ok || r.redirected) { location.href = url; return; }
+        var doc = new DOMParser().parseFromString(await r.text(), "text/html");
+        if (mine !== seq) return;                       // a newer request won
+        var typing = document.activeElement && document.activeElement.id === "q";
+        ["dmetrics", "sentPanel", "dside"].forEach(function (id) {
+          var a = document.getElementById(id), b = doc.getElementById(id);
+          if (a && b) a.replaceWith(document.adoptNode(b));
+        });
+        if (push && url !== location.pathname + location.search) history.pushState(null, "", url);
+        var q = document.getElementById("q");
+        if (typing && q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+      } catch (e) { location.href = url; }
+      finally { var p = document.getElementById("sentPanel"); if (p) p.classList.remove("loading"); }
+    }
+    window.__mailspyRefresh = function () { return load(location.pathname + location.search, false); };
+    document.addEventListener("click", function (e) {
+      var a = e.target.closest && e.target.closest("#sentPanel a[href]");
+      if (!a || a.hasAttribute("download") || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+      var u = new URL(a.href, location.href);
+      if (u.origin !== location.origin || u.pathname !== "/") return;
+      e.preventDefault(); load(u.pathname + u.search, true);
+    });
+    document.addEventListener("submit", function (e) {
+      var f = e.target;
+      if (!f.closest || !f.closest("#sentPanel")) return;
+      e.preventDefault();
+      var p = new URLSearchParams();
+      new FormData(f).forEach(function (v, k) { if (String(v).trim()) p.set(k, String(v).trim()); });
+      var qs = p.toString();
+      load("/" + (qs ? "?" + qs : ""), true);
+    });
+    window.addEventListener("popstate", function () { load(location.pathname + location.search, false); });
     document.addEventListener("keydown", function (e) {
+      var q = document.getElementById("q"); if (!q) return;
       if (e.key === "/" && document.activeElement !== q && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) { e.preventDefault(); q.focus(); }
-      if (e.key === "Escape" && document.activeElement === q) { q.value = ""; if (had) q.form.submit(); else q.blur(); }
+      if (e.key === "Escape" && document.activeElement === q) { var had = !!new URLSearchParams(location.search).get("q"); q.value = ""; if (had) q.form.requestSubmit(); else q.blur(); }
     });
   })();
   </script>
