@@ -431,7 +431,6 @@ function shell(title, body, active = "", user = null) {
       <summary aria-label="Account menu" title="${esc(user.email)}"><span class="av">${initial}</span></summary>
       <div class="menu" role="menu">
         <div class="me">${user.name ? `<b>${esc(user.name)}</b>` : ""}<span>${esc(user.email)}</span></div>
-        ${user.is_admin ? `<a href="/admin" role="menuitem"${active === "Friends" ? ' class="on"' : ""}>Friends</a>` : ""}
         <a href="/logout" role="menuitem">Sign out</a>
       </div>
     </details>` : `<a href="/logout">Sign out</a>`;
@@ -442,6 +441,7 @@ function shell(title, body, active = "", user = null) {
   <a class="logo" href="/">${MARK}<span>MailSpy</span></a>
   <nav>${nav}</nav>
   <div class="hd-r">
+    ${user && user.is_admin ? `<a href="/admin" class="${active === "Admin" ? "on" : ""}">Admin</a>` : ""}
     <a href="/settings" class="${active === "Settings" ? "on" : ""}">Settings</a>
     ${account}
   </div>
@@ -1060,7 +1060,7 @@ export function adminPage({ user, base, users, invites, notice = "", created = n
     <tbody>${userRows}</tbody></table></div></div>
   <div class="panel"><div class="ph"><h2>Invites</h2></div>
     <div style="overflow-x:auto"><table><thead><tr><th>For</th><th>Status</th><th></th></tr></thead><tbody>${inviteRows}</tbody></table></div></div>`;
-  return shell("Friends", body, "Friends", user);
+  return shell("Admin", body, "Admin", user);
 }
 
 // Emails MailSpy will send itself (sendlater.js): Gmail drafts it sends at a set time.

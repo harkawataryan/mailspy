@@ -161,6 +161,8 @@ const dash = V.dashboard({ user, cfg, prefs, emails: [em(a.id), em(b.id)], total
   reminders: [], maxAlert: 0, week: {} });
 check("dashboard: follow-up panel instead of the activity feed", dash.includes("Worth a follow-up") && dash.includes("opened 3 times") && dash.includes("sent 3d ago, no reply") && !dash.includes("<h2>Activity</h2>"), "");
 check("dashboard: last activity column and sort menu", dash.includes("Last activity") && dash.includes('name="sort"') && dash.includes("Latest activity") && dash.includes("Most opens"), "");
+const dashFriend = V.dashboard({ user: { ...user, is_admin: 0 }, cfg, prefs, emails: [], totals: { total: 0 }, followups: [], reminders: [], maxAlert: 0, week: {} });
+check("header: Admin link only for the owner", dash.includes('<a href="/admin"') && !dashFriend.includes('href="/admin"'), "");
 
 // ---- the setting ----
 check("'Hide tracking from my own Sent copy' is on by default", P.defaultPrefs(cfg).hide_sent_pixel === true && P.readPrefs(cfg, "{}").hide_sent_pixel === true, "");
