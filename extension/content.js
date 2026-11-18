@@ -337,12 +337,17 @@ document.addEventListener("keyup", (ev) => {
 // the server "that was me" so the open is not counted.
 // ---------------------------------------------------------------------------
 var serverHost = "";
-var reported = new Set();
+var reported = new Map();   // token -> last report time
 
+// Gmail reloads the images of an open thread every few seconds for a while,
+// and each reload reaches us through its proxy like a recipient's open. The
+// server only counts opens as yours for 20s after a report, so report at most
+// every 5s per email (not once a minute), and keep reporting from the timer
+// below for as long as the thread stays open.
 async function reportSelfView(token) {
-  if (reported.has(token)) return;
-  reported.add(token);
-  setTimeout(() => reported.delete(token), 60000);
+  const t = Date.now();
+  if (t - (reported.get(token) || 0) < 5000) return;
+  reported.set(token, t);
   const { server, apiKey } = await cfg();
   if (!server || !apiKey) return;
   fetch(server.replace(/\/$/, "") + "/api/selfview", {
@@ -395,8 +400,21 @@ function checkImg(img) {
   if (img.closest('[contenteditable="true"]')) { reportComposeView(token); return; } // the copy you are about to send
   img.removeAttribute("src");
   img.remove();
+  threadSeen.set(token, { hash: location.hash, at: Date.now() });
   reportSelfView(token);
 }
+
+// Tracked emails in the thread you have open: token -> where and when we saw it.
+// Reported every 10s while you stay on that thread (up to 10 minutes).
+var threadSeen = new Map();
+setInterval(() => {
+  if (!alive()) return;
+  const t = Date.now();
+  threadSeen.forEach((v, tk) => {
+    if (v.hash !== location.hash || t - v.at > 600000) threadSeen.delete(tk);
+    else reportSelfView(tk);
+  });
+}, 10000);
 
 function scan(node) {
   if (node.nodeType !== 1) return;
