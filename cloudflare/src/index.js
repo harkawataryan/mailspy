@@ -415,7 +415,7 @@ async function handle(req, env, ctx) {
     if (path === "/api/sendlater" && method === "GET") return json(await listQueue(db, uid));
     if (path === "/api/sendlater/queue" && method === "POST") {
       const b = await readBody(req);
-      return json(await queueDrafts(env, cfg, uid, Array.isArray(b.to) ? b.to : [], Number(b.at)));
+      return json(await queueDrafts(env, cfg, uid, Array.isArray(b.to) ? b.to : [], Number(b.at), tbase));
     }
     if (path === "/api/sendlater/draft" && method === "POST") {
       const out = await makeDraft(env, cfg, uid, await readBody(req));
@@ -653,7 +653,7 @@ async function handle(req, env, ctx) {
   // the same actions for the signed-in page (JSON, same-origin only)
   if (path === "/sendlater/queue" && method === "POST") {
     const b = await readBody(req);
-    return json(await queueDrafts(env, cfg, uid, Array.isArray(b.to) ? b.to : [], Number(b.at)));
+    return json(await queueDrafts(env, cfg, uid, Array.isArray(b.to) ? b.to : [], Number(b.at), tbase));
   }
   if (path === "/sendlater/edit" && method === "POST") {
     const b = await readBody(req);

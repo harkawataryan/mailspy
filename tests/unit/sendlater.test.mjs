@@ -191,6 +191,17 @@ check("no pixel: links tracked against the new email, pdf kept", tl.results.find
 await SL.trackQueuedLinks(env, cfg, 1, "https://go.aryanh.dev");
 check("no pixel: running again adds no second email", sqlite.prepare("SELECT COUNT(*) n FROM emails WHERE to_addr='noa@new.com'").get().n === 1, "");
 
+// ---- queueing with the tracking address tracks the draft right away (no separate step)
+drafts.set("d11", { to: "uma@new.com", raw: NRAW.replace(/noa@new\.com/g, "uma@new.com") });
+const qu = await SL.queueDrafts(env, cfg, 1, ["uma@new.com"], at + 9999, "https://go.aryanh.dev");
+const uma = sqlite.prepare("SELECT id, token FROM emails WHERE to_addr='uma@new.com'").all();
+const d11 = decodeQp(drafts.get("d11").raw.split('quoted-printable\r\n\r\n')[1].split("\r\n--ALT--")[0]);
+check("queue with base: untracked draft gets its pixel and links at once", qu.results[0].tracked === true && uma.length === 1 && d11.includes(`/img/${uma[0].token}.gif`) && sqlite.prepare("SELECT COUNT(*) n FROM links WHERE email_id=?").get(uma[0].id).n === 1 && drafts.get("d11").raw.includes(PDF), [qu, uma]);
+await SL.queueDrafts(env, cfg, 1, ["uma@new.com"], at + 9999, "https://go.aryanh.dev");
+check("queue with base again: no second email, no new links", sqlite.prepare("SELECT COUNT(*) n FROM emails WHERE to_addr='uma@new.com'").get().n === 1 && sqlite.prepare("SELECT COUNT(*) n FROM links WHERE email_id=?").get(uma[0].id).n === 1, "");
+const many = await SL.queueDrafts(env, cfg, 1, Array.from({ length: 12 }, (_, i) => `x${i}@many.com`), at, "https://go.aryanh.dev");
+check("queue with base: over 10 addresses, the rest are refused, not dropped", many.results.length === 12 && /at most 10/.test(many.results[11].error), many.results.slice(-2));
+
 // ---- draftMime: a new draft (text + HTML + copied PDF) that the rest of Send later can work on
 const PDFBIN = atob(PDF);
 const DM = SL.draftMime({ to: "ray@waymo.com", subject: "Stripe Intern interested in Waymo (Summer 2027)", text: "Hi Ray,\n\nI'm Aryan.", html: "<div>Hi Ray,<br><br>I'm Aryan. <a href=\"https://aryanh.dev\">aryanh.dev</a></div>", files: [{ name: "r.pdf", type: "application/pdf", bin: PDFBIN }] });

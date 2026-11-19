@@ -146,44 +146,55 @@ export async function trackQueuedLinks(env, cfg, uid, base, after = 0, limit = 1
   const rows = (await env.DB.prepare("SELECT id, draft_id, to_addr, subject, send_at FROM send_queue WHERE user_id=? AND state='queued' AND id>? ORDER BY id LIMIT ?")
     .bind(uid, after, limit).all()).results;
   const results = [];
-  for (const r of rows) {
-    try {
-      const d = await gmail(token, `/drafts/${r.draft_id}?format=raw`);
-      if (!d || !d.message) { results.push({ to: r.to_addr, error: "draft not found" }); continue; }
-      let raw = b64urlToBin(d.message.raw);
-      const px = linkRaw(raw, base, u => u).token;    // dry run: find the email first
-      let email = px && await env.DB.prepare("SELECT id FROM emails WHERE token=? AND user_id=?").bind(px, uid).first();
-      if (!email && !px) {
-        // A draft made outside Gmail compose (no tracking image yet): record it and add one.
-        const withPx = addPixel(raw, base);
-        if (!withPx) { results.push({ to: r.to_addr, error: "no HTML part to add tracking to" }); continue; }
-        const ins = await env.DB.prepare("INSERT INTO emails(token,to_addr,subject,created_at,scheduled_at,user_id) VALUES(?,?,?,?,?,?)")
-          .bind(withPx.token, r.to_addr, r.subject || "(no subject)", now(), r.send_at, uid).run();
-        email = { id: ins.meta.last_row_id };
-        raw = withPx.raw;
-      }
-      if (!email) { results.push({ to: r.to_addr, error: "no MailSpy pixel in this draft" }); continue; }
-      const codes = new Map();
-      const res = linkRaw(raw, base, u => { if (!codes.has(u)) codes.set(u, shortCode(7)); return base.replace(/\/$/, "") + "/" + codes.get(u); });
-      if (!res.changed && raw === b64urlToBin(d.message.raw)) { results.push({ to: r.to_addr, links: 0 }); continue; }
-      if (codes.size) await env.DB.batch([...codes].map(([u, c]) => env.DB.prepare("INSERT INTO links(email_id,token,url) VALUES(?,?,?)").bind(email.id, c, u)));
-      await gmail(token, `/drafts/${r.draft_id}`, { method: "PUT", body: JSON.stringify({ id: r.draft_id, message: { raw: binToB64url(res.raw), threadId: d.message.threadId } }) });
-      results.push({ to: r.to_addr, links: codes.size, urls: [...codes.keys()] });
-    } catch (e) { results.push({ to: r.to_addr, error: String(e.message || e).slice(0, 200) }); }
-  }
+  for (const r of rows) results.push(await trackDraft(env, token, uid, base, r));
   const next = rows.length === limit ? rows[rows.length - 1].id : null;
   return { results, next };
 }
 
+// One queued draft (r: a send_queue row): make sure it has an open pixel (adding one,
+// and its emails row, if it was made outside Gmail compose) and track its links.
+// Three Gmail calls at most. Safe to run again: a tracked draft is left alone.
+async function trackDraft(env, token, uid, base, r) {
+  try {
+    const d = await gmail(token, `/drafts/${r.draft_id}?format=raw`);
+    if (!d || !d.message) return { to: r.to_addr, error: "draft not found" };
+    let raw = b64urlToBin(d.message.raw);
+    const px = linkRaw(raw, base, u => u).token;    // dry run: find the email first
+    let email = px && await env.DB.prepare("SELECT id FROM emails WHERE token=? AND user_id=?").bind(px, uid).first();
+    if (!email && !px) {
+      // A draft made outside Gmail compose (no tracking image yet): record it and add one.
+      const withPx = addPixel(raw, base);
+      if (!withPx) return { to: r.to_addr, error: "no HTML part to add tracking to" };
+      const ins = await env.DB.prepare("INSERT INTO emails(token,to_addr,subject,created_at,scheduled_at,user_id) VALUES(?,?,?,?,?,?)")
+        .bind(withPx.token, r.to_addr, r.subject || "(no subject)", now(), r.send_at, uid).run();
+      email = { id: ins.meta.last_row_id };
+      raw = withPx.raw;
+    }
+    if (!email) return { to: r.to_addr, error: "no MailSpy pixel in this draft" };
+    const codes = new Map();
+    const res = linkRaw(raw, base, u => { if (!codes.has(u)) codes.set(u, shortCode(7)); return base.replace(/\/$/, "") + "/" + codes.get(u); });
+    if (!res.changed && raw === b64urlToBin(d.message.raw)) return { to: r.to_addr, links: 0 };
+    if (codes.size) await env.DB.batch([...codes].map(([u, c]) => env.DB.prepare("INSERT INTO links(email_id,token,url) VALUES(?,?,?)").bind(email.id, c, u)));
+    await gmail(token, `/drafts/${r.draft_id}`, { method: "PUT", body: JSON.stringify({ id: r.draft_id, message: { raw: binToB64url(res.raw), threadId: d.message.threadId } }) });
+    return { to: r.to_addr, links: codes.size, urls: [...codes.keys()] };
+  } catch (e) { return { to: r.to_addr, error: String(e.message || e).slice(0, 200) }; }
+}
+
 // ------------------------------------------------------------------ queue
 // to: addresses; at: unix seconds. One draft per address, or that address is refused.
-export async function queueDrafts(env, cfg, uid, to, at) {
+// base: the tracking address. When given, each queued draft is tracked right away
+// (open pixel + links, see trackDraft), so nothing goes out untracked because the
+// separate "track links" step was forgotten. That costs Gmail calls, so at most
+// PER_QUEUE addresses per request; the rest come back as errors to send again.
+const PER_QUEUE = 10;
+export async function queueDrafts(env, cfg, uid, to, at, base) {
   await ensureSendSchema(env.DB);
   if (!(Number(at) > now())) return { error: "Pick a time in the future." };
   const token = await tokenFor(env, cfg, uid);
   if (!token) return { error: "Connect Gmail first." };
   const out = [];
-  for (const raw of to.slice(0, 20)) {
+  const max = base ? PER_QUEUE : 20;
+  for (const raw of to.slice(0, max)) {
     const addr = String(raw).trim().toLowerCase();
     try {
       const list = (await gmail(token, `/drafts?q=${encodeURIComponent("to:" + addr)}&maxResults=10`)) || {};
@@ -196,9 +207,15 @@ export async function queueDrafts(env, cfg, uid, to, at) {
       await env.DB.prepare(`INSERT INTO send_queue(user_id,draft_id,to_addr,subject,send_at,created_at) VALUES(?,?,?,?,?,?)
           ON CONFLICT(user_id,draft_id) DO UPDATE SET send_at=excluded.send_at, state=CASE WHEN state IN ('sent','sending') THEN state ELSE 'queued' END, tries=0, error=NULL`)
         .bind(uid, found[0].id, addr, found[0].subject, Math.floor(at), now()).run();
-      out.push({ to: addr, draft: found[0].id, subject: found[0].subject });
+      const row = { to: addr, draft: found[0].id, subject: found[0].subject };
+      if (base) {
+        const tr = await trackDraft(env, token, uid, base, { draft_id: found[0].id, to_addr: addr, subject: found[0].subject, send_at: Math.floor(at) });
+        if (tr.error) row.tracking_error = tr.error; else row.tracked = true;
+      }
+      out.push(row);
     } catch (e) { out.push({ to: addr, error: String(e.message || e).slice(0, 200) }); }
   }
+  for (const raw of to.slice(max)) out.push({ to: String(raw).trim().toLowerCase(), error: `not queued: at most ${max} per request, send it again` });
   return { queued: out.filter(r => r.draft).length, results: out };
 }
 
