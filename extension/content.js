@@ -107,6 +107,7 @@ async function trackCompose(root, opts) {
   if (existing) {
     body.setAttribute(SKIP, "1");
     body.setAttribute(TOKEN, existing);
+    sentTokens.set(existing, Date.now());
     // Sent right now (not scheduled): its send time is now, not when it was first tracked.
     if (!(opts && opts.deferWatch)) api("/api/scheduled", { token: existing, at: Math.floor(Date.now() / 1000) });
     return true;
@@ -150,6 +151,7 @@ async function trackCompose(root, opts) {
     }
     return true;
   }
+  sentTokens.set(data.token, Date.now());   // set first: the next line makes the image load
   body.innerHTML = data.html;          // tracked pixel + rewritten links
   body.setAttribute(SKIP, "1");
   body.setAttribute(TOKEN, data.token);
@@ -373,8 +375,15 @@ function pixelToken(img) {
 // every 5 seconds per email) for as long as the window is open, because Gmail
 // reloads the image when it redraws the compose window.
 var composeReported = new Map();   // token -> last report time
+// Emails you just sent from this tab: token -> send time. The compose window loads
+// the image once more as it sends; that load comes straight from Chrome (MailSpy
+// spots it as yours without help), so it isn't reported. Reporting it made the
+// server treat the next 20 seconds of opens as yours, which hid real opens, such
+// as the recipient reading it on their phone right away.
+var sentTokens = new Map();
 function reportComposeView(token) {
   const t = Date.now();
+  if (t - (sentTokens.get(token) || 0) < 120000) return;
   if (t - (composeReported.get(token) || 0) < 5000) return;
   composeReported.set(token, t);
   cfg().then(({ server, apiKey }) => {
