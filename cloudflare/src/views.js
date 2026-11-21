@@ -457,14 +457,6 @@ document.addEventListener("keydown", function (e) {
 <main>${body}</main>${SCRIPT_COMMON}</body></html>`;
 }
 
-function statusOf(e) {
-  const s = e.scheduled_at;
-  if (s && s > now()) return "scheduled";
-  if (s === -1) return "scheduled";
-  if (e.replied_at) return "replied";
-  return e.opens > 0 ? "opened" : "unopened";
-}
-
 function status(e) {
   const s = e.scheduled_at;
   if (s && s > now()) return `<span class="st sched">Scheduled <span class="d">${when(s, "short")}</span></span>`;
@@ -487,36 +479,6 @@ const personHref = addr => `/people/${encodeURIComponent(String(addr || "").trim
 const companyHref = key => `/companies/${encodeURIComponent(key)}`;
 
 // ---- activity list ----
-function activityItem(v) {
-  if (v.kind === "doc") {
-    const self = v.flagged === "self";
-    const who = esc(v.to_name || v.to_addr || "Someone");
-    return `<li class="${self ? "off" : ""}"><span class="dot ${self ? "off" : "doc"}"></span>
-      <div><div class="l1">${self ? "You viewed a PDF" : `<b>${who}</b> viewed a PDF`}</div>
-      <div class="l2"><a href="/docs/${v.item_id}">${esc(v.title)}</a>${v.geo && !self ? ` · ${esc(v.geo)}` : ""}${self ? " · not counted" : ""}</div></div>
-      <span class="tm">${shortAgo(v.ts)}</span></li>`;
-  }
-  if (v.kind === "link") {
-    const bot = !!v.flagged;
-    return `<li class="${bot ? "off" : ""}"><span class="dot ${bot ? "off" : "click"}"></span>
-      <div><div class="l1">${bot ? "Security scanner" : "<b>Someone</b> clicked your tracked link"}</div>
-      <div class="l2"><a href="/links/${v.item_id}">${esc(v.title)}</a>${v.geo && !bot ? ` · ${esc(v.geo)}` : ""}${bot ? " · not counted" : ""}</div></div>
-      <span class="tm">${shortAgo(v.ts)}</span></li>`;
-  }
-  const who = esc(v.to_name || v.to_addr);
-  let line, dot = v.kind === "click" ? "click" : "", off = false;
-  const place = placeOf(v);
-  if (v.flagged === "prefetch") { line = `Image loaded right after sending`; dot = "off"; off = true; }
-  else if (v.flagged === "scanner") { line = `Security scanner`; dot = "off"; off = true; }
-  else if (v.flagged === "self") { line = `You viewed it`; dot = "off"; off = true; }
-  else if (v.flagged === "quoted") { line = `Loaded with a later reply (quoted)`; dot = "off"; off = true; }
-  else if (v.flagged === "apple") { line = `<b>${who}</b>: Apple Mail, may be automatic`; dot = "off"; off = true; }
-  else line = `<b>${who}</b> ${v.kind === "open" ? "opened" : "clicked a link"}`;
-  const sub = `<a href="/email/${v.email_id}">${esc(v.subject)}</a>${place && !off ? ` · ${esc(place)}` : ""}${off ? " · not counted" : ""}`;
-  return `<li class="${off ? "off" : ""}"><span class="dot ${dot}"></span>
-    <div><div class="l1">${line}</div><div class="l2">${sub}</div></div><span class="tm">${shortAgo(v.ts)}</span></li>`;
-}
-
 // ---- pages ----
 // What happened last to an email, for the list's "Last activity" column.
 function lastActivity(e, t = Date.now() / 1000) {

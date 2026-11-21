@@ -36,7 +36,6 @@ export const PATTERNS = [
 
 const GENERIC_HIRING = ["careers", "jobs", "recruiting", "talent", "hr", "people"];
 const HIRING_LOCAL_RE = /^(careers?|jobs?|recruit\w*|talent\w*|hiring|hr|people|join\w*|work\w*|apply|university|campus|internships?)$/i;
-const RECRUITER_RE = /recruit|talent|sourc|hiring|people|human|\bhr\b|acquisition|campus|university/i;
 const ROLE_LOCAL_RE = /^(info|hello|hi|contact|support|help|sales|press|media|pr|security|privacy|legal|abuse|admin|team|office|billing|partners?|marketing|noreply|no-reply|donotreply|webmaster|postmaster|careers?|jobs?|recruit\w*|talent\w*|hiring|hr|people|feedback|investors?|ir)$/i;
 const COMPANYISH = /compan|corporat|business|firm|startup|bank|manufactur|retail|brand|software|platform|service|enterprise|conglomerate|agency|organi[sz]ation|employer|maker|developer|provider|chain|airline|insur|universit|lab|fund|consult|studio|publisher|network|technolog|store|group|holding/i;
 
