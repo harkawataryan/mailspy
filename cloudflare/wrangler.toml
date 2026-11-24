@@ -26,7 +26,7 @@ id = "b2679b027f874d7b909f8189dacd93e2"
 
 # Follow-up reminders and cleanup run every 30 minutes.
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["*/5 * * * *", "*/10 * * * *"]   # the second one only keeps KEEP_WARM servers awake
 
 [vars]
 LOGIN_PATH = "/emailtrack"   # where the sign-in page lives

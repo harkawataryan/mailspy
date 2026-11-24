@@ -961,6 +961,16 @@ export default {
     }
   },
   async scheduled(event, env, ctx) {
+    // Its own trigger (every 10 minutes), so it never eats into the main sweep's
+    // subrequest budget: ping each server in KEEP_WARM (a Cloudflare secret, a
+    // comma-separated list of URLs) so free hosts that sleep after 15 idle
+    // minutes, like Render, stay awake. Unset in other copies: nothing happens.
+    if (event.cron === "*/10 * * * *") {
+      const urls = String(env.KEEP_WARM || "").split(",").map(u => u.trim()).filter(u => u.startsWith("https://"));
+      ctx.waitUntil(Promise.all(urls.map(u => fetch(u, { headers: { "User-Agent": "MailSpy keep-warm" } })
+        .then(r => r.body && r.body.cancel()).catch(err => console.error("keep warm:", u, err)))));
+      return;
+    }
     const cfg = settings(env);
     // Replies first, so follow-up reminders never go out for an email that was just answered.
     ctx.waitUntil(sweepReplies(env, cfg).catch(err => console.error("reply sweep:", err))
