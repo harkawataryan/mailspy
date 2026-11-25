@@ -72,8 +72,9 @@ extension (`extension/site.js` and `manifest.json`) and to
    - the redirect URI is `<app>/auth/google/callback`;
    - the privacy policy is `<app>/privacy`.
 9. **Install the extension and point it at your server:**
-   1. Install MailSpy from the
-      [Chrome Web Store](https://chromewebstore.google.com/detail/mailspy-email-tracking-fo/dofghebhjogkhipgjkhnomhmaiplgdgi).
+   1. Download it from **Settings → Chrome extension** on your `app` address,
+      unzip it, and load the folder with **Load unpacked** in
+      `chrome://extensions` (with Developer mode on).
    2. On its sign-in page, open **Use a different MailSpy server** and enter
       your `app` address, for example `https://mailspy.example.com`.
    3. Sign in with your password, or with Google. With Google, Chrome first asks
@@ -88,12 +89,8 @@ extension (`extension/site.js` and `manifest.json`) and to
 To share yours with friends:
 - Create invites at `<app>/admin`.
 - Add their Gmail as test users on your Google consent screen.
-- Have them install MailSpy from the Web Store and enter your `app` address as
-  their server.
-
-If you change the extension and want those changes in everyone's hands, publish
-your own Web Store listing ([chrome-web-store.md](chrome-web-store.md), with
-your own extension ID and secrets), or send your changes back as a pull request.
+- Have them download the extension from your Settings page the same way and
+  enter your `app` address as their server.
 
 **Only want your own domain in your emails?** You may not need any of this. If
 the MailSpy server you use has it switched on, set **Settings → Your tracking
@@ -161,8 +158,6 @@ get the new scripts too, without a refresh.
 - **Leave the folder where it is.** Chrome loads it from that exact path, so
   moving or deleting the clone breaks the extension.
 
-**Updating your friends too:** for people using your server to get your
-extension changes automatically, publish your own Chrome Web Store listing
-and set up the publish workflow ([chrome-web-store.md](chrome-web-store.md),
-with your own extension ID and secrets). After that, each push to your fork's
-`main` that changes `extension/` uploads a new version for Google to review.
+**Updating your friends too:** when you deploy a new version, their extension
+shows a red **NEW** badge. They download it again from Settings, replace the
+folder's files, and click the reload arrow on MailSpy in `chrome://extensions`.
